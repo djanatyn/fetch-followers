@@ -5,7 +5,9 @@ use egg_mode::{self, Token};
 use futures::StreamExt;
 use futures::TryStreamExt;
 use miette::{self, Diagnostic};
+use opentelemetry::global::shutdown_tracer_provider;
 use opentelemetry::{
+    global,
     sdk::trace,
     trace::{TraceContextExt, Tracer},
     KeyValue,
@@ -85,7 +87,9 @@ fn init_tracer(config: &Config) -> trace::Tracer {
 async fn main() -> miette::Result<()> {
     // load config, setup tracing
     let config = load_config()?;
-    let tracer = init_tracer(&config);
+    let _ = init_tracer(&config);
+
+    let tracer = global::tracer("fetch-followers");
 
     tracer
         .in_span("start app", async move |cx| {
@@ -100,9 +104,13 @@ async fn main() -> miette::Result<()> {
 
             if let Ok(friends) = friends {
                 for friend in friends {
-                    cx.span().add_event(
+                    let span = cx.span();
+                    span.add_event(
                         "friend found",
-                        vec![KeyValue::new("name", dbg!(friend.name))],
+                        vec![
+                            KeyValue::new("name", dbg!(friend.name)),
+                            KeyValue::new("screen_name", dbg!(friend.screen_name)),
+                        ],
                     );
                     // event!(Level::INFO, ?friend.name, ?friend.screen_name, "friend found");
                 }
@@ -111,10 +119,12 @@ async fn main() -> miette::Result<()> {
             }
 
             println!("done!");
-
-            Ok(())
         })
-        .await
+        .await;
+
+    shutdown_tracer_provider();
+
+    Ok(())
 }
 
 #[cfg(test)]
