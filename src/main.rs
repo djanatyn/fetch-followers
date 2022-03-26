@@ -3,7 +3,6 @@
 use egg_mode::user::TwitterUser;
 use egg_mode::{self, Token};
 use futures::StreamExt;
-use futures::TryStreamExt;
 use miette::{self, Diagnostic};
 use opentelemetry::global::shutdown_tracer_provider;
 use opentelemetry::{
@@ -23,7 +22,6 @@ use tonic::{
 };
 
 const PAGE_SIZE: i32 = 20;
-const MAX_USERS: usize = 20; // TODO: increase
 
 #[derive(Deserialize, Debug)]
 struct Config {
@@ -94,28 +92,22 @@ async fn main() -> miette::Result<()> {
     tracer
         .in_span("start app", async move |cx| {
             let token = Token::Bearer(config.fetch_followers_token);
-            let friends: egg_mode::error::Result<Vec<TwitterUser>> =
-                egg_mode::user::friends_of("djanatyn", &token)
-                    .with_page_size(PAGE_SIZE)
-                    .take(MAX_USERS)
-                    .map_ok(|r| r.response)
-                    .try_collect::<Vec<_>>()
-                    .await;
+            let friends: Vec<TwitterUser> = egg_mode::user::friends_of("djanatyn", &token)
+                .with_page_size(PAGE_SIZE)
+                .fold(vec![], |_friends, friend| async move {
+                    todo!("iterate over pages of friends: {friend:#?}");
+                })
+                .await;
 
-            if let Ok(friends) = friends {
-                for friend in friends {
-                    let span = cx.span();
-                    span.add_event(
-                        "friend found",
-                        vec![
-                            KeyValue::new("name", dbg!(friend.name)),
-                            KeyValue::new("screen_name", dbg!(friend.screen_name)),
-                        ],
-                    );
-                    // event!(Level::INFO, ?friend.name, ?friend.screen_name, "friend found");
-                }
-            } else {
-                println!("{friends:#?}");
+            for friend in friends {
+                let span = cx.span();
+                span.add_event(
+                    "friend found",
+                    vec![
+                        KeyValue::new("name", dbg!(friend.name)),
+                        KeyValue::new("screen_name", dbg!(friend.screen_name)),
+                    ],
+                );
             }
 
             println!("done!");
