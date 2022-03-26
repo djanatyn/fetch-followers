@@ -8,7 +8,7 @@ use opentelemetry::global::shutdown_tracer_provider;
 use opentelemetry::{
     global,
     sdk::trace,
-    trace::{TraceContextExt, Tracer},
+    trace::{get_active_span, Tracer},
     KeyValue,
 };
 use opentelemetry_otlp::{ExportConfig, Protocol, WithExportConfig};
@@ -16,12 +16,13 @@ use serde::Deserialize;
 use std::str::FromStr;
 use std::time::Duration;
 use thiserror::Error;
+use tokio::time::{self, sleep};
 use tonic::{
     metadata::{MetadataKey, MetadataMap},
     transport::ClientTlsConfig,
 };
 
-const PAGE_SIZE: i32 = 20;
+const PAGE_SIZE: usize = 200;
 
 #[derive(Deserialize, Debug)]
 struct Config {
@@ -88,27 +89,41 @@ async fn main() -> miette::Result<()> {
     let _ = init_tracer(&config);
 
     let tracer = global::tracer("fetch-followers");
-
     tracer
-        .in_span("start app", async move |cx| {
+        .in_span("start app", async move |_cx| {
             let token = Token::Bearer(config.fetch_followers_token);
-            let friends: Vec<TwitterUser> = egg_mode::user::friends_of("djanatyn", &token)
-                .with_page_size(PAGE_SIZE)
-                .fold(vec![], |_friends, friend| async move {
-                    todo!("iterate over pages of friends: {friend:#?}");
+            let users_you_follow: Vec<TwitterUser> = egg_mode::user::friends_of("djanatyn", &token)
+                .with_page_size(PAGE_SIZE.try_into().unwrap())
+                .enumerate()
+                .fold(vec![], |mut friends, (n, response)| async move {
+                    // retrieve user
+                    let user = match response {
+                        Ok(response) => dbg!(response).response,
+                        Err(error) => panic!("failed to fetch all friends: {error}"),
+                    };
+                    // add user to list
+                    friends.push(user.clone());
+
+                    // record user found as event
+                    get_active_span(|span| {
+                        span.add_event(
+                            "friend found",
+                            vec![
+                                KeyValue::new("name", dbg!(user.name)),
+                                KeyValue::new("screen_name", dbg!(user.screen_name)),
+                            ],
+                        );
+                    });
+
+                    // sleep before making a network call
+                    if n % PAGE_SIZE == 0 {
+                        sleep(time::Duration::from_secs(3)).await
+                    };
+
+                    // return accumulated users each step
+                    friends
                 })
                 .await;
-
-            for friend in friends {
-                let span = cx.span();
-                span.add_event(
-                    "friend found",
-                    vec![
-                        KeyValue::new("name", dbg!(friend.name)),
-                        KeyValue::new("screen_name", dbg!(friend.screen_name)),
-                    ],
-                );
-            }
 
             println!("done!");
         })
