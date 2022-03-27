@@ -26,6 +26,7 @@ use tonic::{
 const PAGE_SIZE: usize = 200;
 const HONEYCOMB_ENDPOINT: &str = "https://api.honeycomb.io:443";
 const HONEYCOMB_DOMAIN: &str = "api.honeycomb.io";
+const ME: &str = "djanatyn";
 
 #[derive(Serialize)]
 pub struct TwitterUserRef<'a>(#[serde(with = "TwitterUser")] &'a TwitterUser);
@@ -142,7 +143,7 @@ async fn walk_pages(
 
 /// Fetch who I'm following.
 async fn fetch_following(token: &Token) -> miette::Result<Vec<TwitterUser>> {
-    Ok(user::friends_of("djanatyn", token)
+    Ok(user::friends_of(ME, token)
         .with_page_size(PAGE_SIZE.try_into().unwrap())
         .enumerate()
         .fold(vec![], walk_pages)
@@ -151,7 +152,7 @@ async fn fetch_following(token: &Token) -> miette::Result<Vec<TwitterUser>> {
 
 /// Fetch my followers.
 async fn fetch_followers(token: &Token) -> miette::Result<Vec<TwitterUser>> {
-    Ok(user::followers_of("djanatyn", token)
+    Ok(user::followers_of(ME, token)
         .with_page_size(PAGE_SIZE.try_into().unwrap())
         .enumerate()
         .fold(vec![], walk_pages)
