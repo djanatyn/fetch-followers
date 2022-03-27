@@ -24,53 +24,11 @@ use tonic::{
 };
 
 const PAGE_SIZE: usize = 200;
+const HONEYCOMB_ENDPOINT: &str = "https://api.honeycomb.io:443";
+const HONEYCOMB_DOMAIN: &str = "api.honeycomb.io";
 
-// https://serde.rs/remote-derive.html
-// https://docs.rs/egg-mode/0.16.0/src/egg_mode/user/mod.rs.html#165
-#[derive(Serialize, Debug, Clone)]
-#[serde(remote = "TwitterUser")]
-pub struct TwitterUserRef {
-    pub contributors_enabled: bool,
-    // pub created_at: chrono::DateTime<chrono::Utc>,
-    pub default_profile: bool,
-    pub default_profile_image: bool,
-    pub description: Option<String>,
-    // pub entities: UserEntities,
-    pub favourites_count: i32,
-    pub follow_request_sent: Option<bool>,
-    pub followers_count: i32,
-    pub friends_count: i32,
-    pub geo_enabled: bool,
-    pub id: u64,
-    pub is_translator: bool,
-    pub lang: Option<String>,
-    pub listed_count: i32,
-    pub location: Option<String>,
-    pub name: String,
-    pub profile_background_color: String,
-    pub profile_background_image_url: Option<String>,
-    pub profile_background_image_url_https: Option<String>,
-    pub profile_background_tile: Option<bool>,
-    pub profile_banner_url: Option<String>,
-    pub profile_image_url: String,
-    pub profile_image_url_https: String,
-    pub profile_link_color: String,
-    pub profile_sidebar_border_color: String,
-    pub profile_sidebar_fill_color: String,
-    pub profile_text_color: String,
-    pub profile_use_background_image: bool,
-    pub protected: bool,
-    pub screen_name: String,
-    pub show_all_inline_media: Option<bool>,
-    // pub status: Option<Box<tweet::Tweet>>,
-    pub statuses_count: i32,
-    pub time_zone: Option<String>,
-    pub url: Option<String>,
-    pub utc_offset: Option<i32>,
-    pub verified: bool,
-    pub withheld_in_countries: Option<Vec<String>>,
-    pub withheld_scope: Option<String>,
-}
+#[derive(Serialize)]
+pub struct TwitterUserRef<'a>(#[serde(with = "TwitterUser")] &'a TwitterUser);
 
 #[derive(Deserialize, Debug)]
 struct Config {
@@ -84,9 +42,6 @@ enum AppError {
     #[error("failed to load environment variable: {0:?}")]
     MissingVariables(envy::Error),
 }
-
-const HONEYCOMB_ENDPOINT: &str = "https://api.honeycomb.io:443";
-const HONEYCOMB_DOMAIN: &str = "api.honeycomb.io";
 
 /// Try to load Twitter API Bearer token from environment variables.
 fn load_config() -> Result<Config, AppError> {
@@ -127,14 +82,14 @@ fn init_tracer(config: &Config) -> trace::Tracer {
         .expect("failed to create tracer")
 }
 
-async fn fetch_users(token: &Token) -> miette::Result<Vec<TwitterUser>> {
+async fn fetch_following(token: &Token) -> miette::Result<Vec<TwitterUser>> {
     Ok(egg_mode::user::friends_of("djanatyn", token)
         .with_page_size(PAGE_SIZE.try_into().unwrap())
         .enumerate()
         .fold(vec![], |mut friends, (n, response)| async move {
             // retrieve user
             let user = match response {
-                Ok(response) => dbg!(response).response,
+                Ok(response) => response.response,
                 Err(error) => panic!("failed to fetch all friends: {error}"),
             };
 
@@ -146,7 +101,7 @@ async fn fetch_users(token: &Token) -> miette::Result<Vec<TwitterUser>> {
                 span.add_event(
                     "friend found",
                     vec![
-                        KeyValue::new("name", dbg!(user.name)),
+                        KeyValue::new("name", user.name),
                         KeyValue::new("screen_name", dbg!(user.screen_name)),
                     ],
                 );
@@ -173,10 +128,10 @@ async fn main() -> miette::Result<()> {
     tracer
         .in_span("start app", async move |_cx| {
             let token = Token::Bearer(config.fetch_followers_token);
-            let users_you_follow: Vec<TwitterUser> = fetch_users(&token).await?;
+            let following: Vec<TwitterUser> = fetch_following(&token).await?;
 
-            let json = serde_json::to_string(&users_you_follow);
-            println!("{json:#?}");
+            let json = serde_json::to_string(&following).expect("failed to convert to JSON");
+            print!("{json}");
 
             Ok(()): miette::Result<()>
         })
@@ -185,12 +140,4 @@ async fn main() -> miette::Result<()> {
     shutdown_tracer_provider();
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn load_config() {
-        todo!();
-    }
 }
