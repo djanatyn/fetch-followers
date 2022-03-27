@@ -165,7 +165,7 @@ async fn fetch_followers(token: &Token) -> miette::Result<Vec<TwitterUser>> {
 async fn main() -> miette::Result<()> {
     // load config, setup tracing
     let config = load_config()?;
-    let _ = init_tracer(&config);
+    init_tracer(&config);
 
     let tracer = global::tracer("fetch-followers");
     tracer
