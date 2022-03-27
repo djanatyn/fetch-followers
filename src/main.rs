@@ -1,8 +1,8 @@
 #![feature(async_closure)]
 #![feature(type_ascription)]
 
-use egg_mode::user::TwitterUser;
-use egg_mode::{self, Token};
+use egg_mode::user::{self, TwitterUser};
+use egg_mode::{self, Response, Token};
 use futures::StreamExt;
 use miette::{self, Diagnostic};
 use opentelemetry::global::shutdown_tracer_provider;
@@ -41,6 +41,12 @@ struct Config {
 enum AppError {
     #[error("failed to load environment variable: {0:?}")]
     MissingVariables(envy::Error),
+}
+
+#[derive(Serialize, Debug)]
+struct Output {
+    followers: Vec<TwitterUser>,
+    following: Vec<TwitterUser>,
 }
 
 /// Try to load Twitter API Bearer token from environment variables.
@@ -98,40 +104,57 @@ fn init_tracer(config: &Config) -> trace::Tracer {
 ///     println!("{} (@{})", user.name, user.screen_name);
 /// }
 /// ```
+///
 
+/// Walk through paginated, enumerated results.
+async fn walk_pages(
+    mut friends: Vec<TwitterUser>,
+    (n, response): (usize, egg_mode::error::Result<Response<TwitterUser>>),
+) -> Vec<TwitterUser> {
+    // retrieve user
+    let user = match response {
+        Ok(response) => response.response,
+        Err(error) => panic!("failed to fetch all friends: {error}"),
+    };
+
+    // add user to list
+    friends.push(user.clone());
+
+    // record user found as event
+    get_active_span(|span| {
+        span.add_event(
+            "friend found",
+            vec![
+                KeyValue::new("name", user.name),
+                KeyValue::new("screen_name", dbg!(user.screen_name)),
+            ],
+        );
+    });
+
+    // sleep before making a network call
+    if n % PAGE_SIZE == 0 {
+        sleep(time::Duration::from_secs(3)).await
+    };
+
+    // return accumulated users each step
+    friends
+}
+
+/// Fetch who I'm following.
 async fn fetch_following(token: &Token) -> miette::Result<Vec<TwitterUser>> {
-    Ok(egg_mode::user::friends_of("djanatyn", token)
+    Ok(user::friends_of("djanatyn", token)
         .with_page_size(PAGE_SIZE.try_into().unwrap())
         .enumerate()
-        .fold(vec![], |mut friends, (n, response)| async move {
-            // retrieve user
-            let user = match response {
-                Ok(response) => response.response,
-                Err(error) => panic!("failed to fetch all friends: {error}"),
-            };
+        .fold(vec![], walk_pages)
+        .await)
+}
 
-            // add user to list
-            friends.push(user.clone());
-
-            // record user found as event
-            get_active_span(|span| {
-                span.add_event(
-                    "friend found",
-                    vec![
-                        KeyValue::new("name", user.name),
-                        KeyValue::new("screen_name", dbg!(user.screen_name)),
-                    ],
-                );
-            });
-
-            // sleep before making a network call
-            if n % PAGE_SIZE == 0 {
-                sleep(time::Duration::from_secs(3)).await
-            };
-
-            // return accumulated users each step
-            friends
-        })
+/// Fetch my followers.
+async fn fetch_followers(token: &Token) -> miette::Result<Vec<TwitterUser>> {
+    Ok(user::followers_of("djanatyn", token)
+        .with_page_size(PAGE_SIZE.try_into().unwrap())
+        .enumerate()
+        .fold(vec![], walk_pages)
         .await)
 }
 
@@ -144,10 +167,19 @@ async fn main() -> miette::Result<()> {
     let tracer = global::tracer("fetch-followers");
     tracer
         .in_span("start app", async move |_cx| {
+            // construct bearer token for twitter API
             let token = Token::Bearer(config.fetch_followers_token);
-            let following: Vec<TwitterUser> = fetch_following(&token).await?;
 
-            let json = serde_json::to_string(&following).expect("failed to convert to JSON");
+            // retrieve followers + following
+            let following: Vec<TwitterUser> = fetch_following(&token).await?;
+            let followers: Vec<TwitterUser> = fetch_followers(&token).await?;
+
+            // output as JSON
+            let output = Output {
+                following,
+                followers,
+            };
+            let json = serde_json::to_string(&output).expect("failed to convert to JSON");
             print!("{json}");
 
             Ok(()): miette::Result<()>
