@@ -24,6 +24,7 @@ use tonic::{
 };
 
 const PAGE_SIZE: usize = 200;
+const SLEEP_DURATION: Duration = time::Duration::from_secs(3);
 const HONEYCOMB_ENDPOINT: &str = "https://api.honeycomb.io:443";
 const HONEYCOMB_DOMAIN: &str = "api.honeycomb.io";
 const ME: &str = "djanatyn";
@@ -134,7 +135,7 @@ async fn walk_pages(
 
     // sleep before making a network call
     if n % PAGE_SIZE == 0 {
-        sleep(time::Duration::from_secs(3)).await
+        sleep(SLEEP_DURATION).await
     };
 
     // return accumulated users each step
