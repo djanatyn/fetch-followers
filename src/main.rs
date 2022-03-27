@@ -82,6 +82,23 @@ fn init_tracer(config: &Config) -> trace::Tracer {
         .expect("failed to create tracer")
 }
 
+/// TODO: https://docs.rs/egg-mode/latest/egg_mode/cursor/struct.CursorIter.html#manual-paging
+/// ````
+/// let mut list = egg_mode::user::followers_of("rustlang", &token).with_page_size(20);
+/// let resp = list.call().await.unwrap();
+
+/// for user in resp.response.users {
+///     println!("{} (@{})", user.name, user.screen_name);
+/// }
+
+/// list.next_cursor = resp.response.next_cursor;
+/// let resp = list.call().await.unwrap();
+
+/// for user in resp.response.users {
+///     println!("{} (@{})", user.name, user.screen_name);
+/// }
+/// ```
+
 async fn fetch_following(token: &Token) -> miette::Result<Vec<TwitterUser>> {
     Ok(egg_mode::user::friends_of("djanatyn", token)
         .with_page_size(PAGE_SIZE.try_into().unwrap())
