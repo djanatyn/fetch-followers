@@ -1,4 +1,5 @@
 #![feature(async_closure)]
+#![feature(type_ascription)]
 
 use egg_mode::user::TwitterUser;
 use egg_mode::{self, Token};
@@ -82,6 +83,42 @@ fn init_tracer(config: &Config) -> trace::Tracer {
         .expect("failed to create tracer")
 }
 
+async fn fetch_users(token: &Token) -> miette::Result<Vec<TwitterUser>> {
+    Ok(egg_mode::user::friends_of("djanatyn", &token)
+        .with_page_size(PAGE_SIZE.try_into().unwrap())
+        .enumerate()
+        .fold(vec![], |mut friends, (n, response)| async move {
+            // retrieve user
+            let user = match response {
+                Ok(response) => dbg!(response).response,
+                Err(error) => panic!("failed to fetch all friends: {error}"),
+            };
+
+            // add user to list
+            friends.push(user.clone());
+
+            // record user found as event
+            get_active_span(|span| {
+                span.add_event(
+                    "friend found",
+                    vec![
+                        KeyValue::new("name", dbg!(user.name)),
+                        KeyValue::new("screen_name", dbg!(user.screen_name)),
+                    ],
+                );
+            });
+
+            // sleep before making a network call
+            if n % PAGE_SIZE == 0 {
+                sleep(time::Duration::from_secs(3)).await
+            };
+
+            // return accumulated users each step
+            friends
+        })
+        .await)
+}
+
 #[tokio::main]
 async fn main() -> miette::Result<()> {
     // load config, setup tracing
@@ -92,40 +129,11 @@ async fn main() -> miette::Result<()> {
     tracer
         .in_span("start app", async move |_cx| {
             let token = Token::Bearer(config.fetch_followers_token);
-            let users_you_follow: Vec<TwitterUser> = egg_mode::user::friends_of("djanatyn", &token)
-                .with_page_size(PAGE_SIZE.try_into().unwrap())
-                .enumerate()
-                .fold(vec![], |mut friends, (n, response)| async move {
-                    // retrieve user
-                    let user = match response {
-                        Ok(response) => dbg!(response).response,
-                        Err(error) => panic!("failed to fetch all friends: {error}"),
-                    };
-                    // add user to list
-                    friends.push(user.clone());
-
-                    // record user found as event
-                    get_active_span(|span| {
-                        span.add_event(
-                            "friend found",
-                            vec![
-                                KeyValue::new("name", dbg!(user.name)),
-                                KeyValue::new("screen_name", dbg!(user.screen_name)),
-                            ],
-                        );
-                    });
-
-                    // sleep before making a network call
-                    if n % PAGE_SIZE == 0 {
-                        sleep(time::Duration::from_secs(3)).await
-                    };
-
-                    // return accumulated users each step
-                    friends
-                })
-                .await;
+            let users_you_follow: Vec<TwitterUser> = fetch_users(&token).await?;
 
             println!("done!");
+
+            Ok(()): miette::Result<()>
         })
         .await;
 
