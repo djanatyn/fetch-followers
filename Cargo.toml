@@ -11,6 +11,7 @@ futures = "0.3"
 egg-mode = "0.16.0"
 # twitter tokens
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 envy = "0.4.2"
 # debug traces
 tonic = "*"
