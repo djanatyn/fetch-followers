@@ -13,7 +13,7 @@ use opentelemetry::{
     KeyValue,
 };
 use opentelemetry_otlp::{ExportConfig, Protocol, WithExportConfig};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::time::Duration;
 use thiserror::Error;
@@ -24,6 +24,53 @@ use tonic::{
 };
 
 const PAGE_SIZE: usize = 200;
+
+// https://serde.rs/remote-derive.html
+// https://docs.rs/egg-mode/0.16.0/src/egg_mode/user/mod.rs.html#165
+#[derive(Serialize, Debug, Clone)]
+#[serde(remote = "TwitterUser")]
+pub struct TwitterUserRef {
+    pub contributors_enabled: bool,
+    // pub created_at: chrono::DateTime<chrono::Utc>,
+    pub default_profile: bool,
+    pub default_profile_image: bool,
+    pub description: Option<String>,
+    // pub entities: UserEntities,
+    pub favourites_count: i32,
+    pub follow_request_sent: Option<bool>,
+    pub followers_count: i32,
+    pub friends_count: i32,
+    pub geo_enabled: bool,
+    pub id: u64,
+    pub is_translator: bool,
+    pub lang: Option<String>,
+    pub listed_count: i32,
+    pub location: Option<String>,
+    pub name: String,
+    pub profile_background_color: String,
+    pub profile_background_image_url: Option<String>,
+    pub profile_background_image_url_https: Option<String>,
+    pub profile_background_tile: Option<bool>,
+    pub profile_banner_url: Option<String>,
+    pub profile_image_url: String,
+    pub profile_image_url_https: String,
+    pub profile_link_color: String,
+    pub profile_sidebar_border_color: String,
+    pub profile_sidebar_fill_color: String,
+    pub profile_text_color: String,
+    pub profile_use_background_image: bool,
+    pub protected: bool,
+    pub screen_name: String,
+    pub show_all_inline_media: Option<bool>,
+    // pub status: Option<Box<tweet::Tweet>>,
+    pub statuses_count: i32,
+    pub time_zone: Option<String>,
+    pub url: Option<String>,
+    pub utc_offset: Option<i32>,
+    pub verified: bool,
+    pub withheld_in_countries: Option<Vec<String>>,
+    pub withheld_scope: Option<String>,
+}
 
 #[derive(Deserialize, Debug)]
 struct Config {
@@ -44,10 +91,7 @@ const HONEYCOMB_DOMAIN: &str = "api.honeycomb.io";
 /// Try to load Twitter API Bearer token from environment variables.
 fn load_config() -> Result<Config, AppError> {
     match envy::from_env::<Config>() {
-        Ok(config) => {
-            println!("loaded config!");
-            Ok(config)
-        }
+        Ok(config) => Ok(config),
         Err(error) => Err(AppError::MissingVariables(error)),
     }
 }
@@ -84,7 +128,7 @@ fn init_tracer(config: &Config) -> trace::Tracer {
 }
 
 async fn fetch_users(token: &Token) -> miette::Result<Vec<TwitterUser>> {
-    Ok(egg_mode::user::friends_of("djanatyn", &token)
+    Ok(egg_mode::user::friends_of("djanatyn", token)
         .with_page_size(PAGE_SIZE.try_into().unwrap())
         .enumerate()
         .fold(vec![], |mut friends, (n, response)| async move {
@@ -131,11 +175,12 @@ async fn main() -> miette::Result<()> {
             let token = Token::Bearer(config.fetch_followers_token);
             let users_you_follow: Vec<TwitterUser> = fetch_users(&token).await?;
 
-            println!("done!");
+            let json = serde_json::to_string(&users_you_follow);
+            println!("{json:#?}");
 
             Ok(()): miette::Result<()>
         })
-        .await;
+        .await?;
 
     shutdown_tracer_provider();
 
