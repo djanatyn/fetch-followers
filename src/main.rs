@@ -17,14 +17,15 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::time::{self, sleep};
+use tokio::time::sleep;
 use tonic::{
     metadata::{MetadataKey, MetadataMap},
     transport::ClientTlsConfig,
 };
 
 const PAGE_SIZE: usize = 200;
-const SLEEP_DURATION: Duration = time::Duration::from_secs(3);
+const SLEEP_DURATION: Duration = Duration::from_secs(3);
+const TRACE_EXPORT_TIMEOUT: Duration = Duration::from_secs(10);
 const HONEYCOMB_ENDPOINT: &str = "https://api.honeycomb.io:443";
 const HONEYCOMB_DOMAIN: &str = "api.honeycomb.io";
 const ME: &str = "djanatyn";
@@ -63,7 +64,7 @@ fn load_config() -> Result<Config, AppError> {
 fn init_tracer(config: &Config) -> trace::Tracer {
     let export_config = ExportConfig {
         endpoint: HONEYCOMB_ENDPOINT.to_string(),
-        timeout: Duration::from_secs(10),
+        timeout: TRACE_EXPORT_TIMEOUT,
         protocol: Protocol::Grpc,
     };
 
