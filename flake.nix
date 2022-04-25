@@ -10,7 +10,7 @@
         pname = "fetch-followers";
         version = "1.0";
         src = ./.;
-        cargoSha256 = "sha256-UJAqefyKg4kv2DZPHbqj94cmmcYoYn5Y18cBwgBDG1k=";
+        cargoSha256 = "sha256-vw4YeBub9DwXRN0YEfIelzc2NEC+nr3cZano+7guzj0=";
         cargoDepsName = pname;
         buildInputs = [ pkgs.openssl ];
         nativeBuildInputs = with pkgs; [
