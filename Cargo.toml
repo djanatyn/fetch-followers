@@ -19,7 +19,7 @@ tracing = "0.1.32"
 tracing-subscriber = "0.3.9"
 tracing-opentelemetry = "0.17"
 opentelemetry = { version = "0.17", features = ["trace", "rt-tokio"]}
-opentelemetry-otlp = { version = "0.10", features = ["tonic", "tls", "tls-roots"]}
+opentelemetry-otlp = { version = "0.10", features = ["reqwest-client", "http-proto", "tonic", "tls", "tls-roots"]}
 # error handling
 thiserror = "1.0"
 miette = { version = "4.2", features = ["fancy"] }

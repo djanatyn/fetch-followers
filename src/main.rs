@@ -14,6 +14,7 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::{ExportConfig, Protocol, WithExportConfig};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::Duration;
 use thiserror::Error;
@@ -26,8 +27,8 @@ use tonic::{
 const PAGE_SIZE: usize = 200;
 const SLEEP_DURATION: Duration = Duration::from_secs(3);
 const TRACE_EXPORT_TIMEOUT: Duration = Duration::from_secs(10);
-const HONEYCOMB_ENDPOINT: &str = "https://api.honeycomb.io:443";
-const HONEYCOMB_DOMAIN: &str = "api.honeycomb.io";
+const HONEYCOMB_ENDPOINT: &str = "http://otelcol-fast.aspecto.io:443";
+const HONEYCOMB_DOMAIN: &str = "otelcol-fast.aspecto.io";
 const ME: &str = "djanatyn";
 
 #[derive(Serialize)]
@@ -65,27 +66,34 @@ fn init_tracer(config: &Config) -> trace::Tracer {
     let export_config = ExportConfig {
         endpoint: HONEYCOMB_ENDPOINT.to_string(),
         timeout: TRACE_EXPORT_TIMEOUT,
-        protocol: Protocol::Grpc,
+        protocol: Protocol::HttpBinary,
     };
 
     let mut metadata = MetadataMap::new();
     metadata.insert(
-        MetadataKey::from_str("x-honeycomb-team").unwrap(),
+        MetadataKey::from_str("Authorization").unwrap(),
         config.honeycomb_team.parse().unwrap(),
     );
-    metadata.insert(
-        MetadataKey::from_str("x-honeycomb-dataset").unwrap(),
-        config.honeycomb_dataset.parse().unwrap(),
+    // metadata.insert(
+    //     MetadataKey::from_str("x-honeycomb-dataset").unwrap(),
+    //     config.honeycomb_dataset.parse().unwrap(),
+    // );
+
+    let mut headers = HashMap::new();
+    headers.insert(
+        "Authorization".to_string(),
+        config.honeycomb_team.to_string(),
     );
 
     opentelemetry_otlp::new_pipeline()
         .tracing()
         .with_exporter(
             opentelemetry_otlp::new_exporter()
-                .tonic()
+                .http()
                 .with_export_config(export_config)
-                .with_metadata(dbg!(metadata))
-                .with_tls_config(ClientTlsConfig::new().domain_name(HONEYCOMB_DOMAIN)),
+                .with_headers(headers)
+                // .with_metadata(dbg!(metadata))
+                // .with_tls_config(ClientTlsConfig::new().domain_name(HONEYCOMB_DOMAIN)),
         )
         .install_batch(opentelemetry::runtime::Tokio)
         .expect("failed to create tracer")
