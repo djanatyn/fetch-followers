@@ -48,6 +48,12 @@ struct Config {
 enum AppError {
     #[error("failed to load environment variable: {0:?}")]
     MissingVariables(envy::Error),
+
+    #[error("hit rate limit, must wait until: {0:?}")]
+    RateLimit(i32),
+
+    #[error("unknown error")]
+    UnknownError,
 }
 
 #[derive(Serialize, Debug)]
@@ -67,15 +73,18 @@ fn load_config() -> Result<Config, AppError> {
 /// Flip through paginated results of users.
 /// Used with `user::followers_of` and `user::friends_of`.
 async fn flip_pages(mut pages: CursorIter<UserCursor>) -> miette::Result<Vec<TwitterUser>> {
+    // initialize user list
     let mut users: Vec<TwitterUser> = Vec::new();
+
+    // check for rate limit on first call
     let mut cursor = pages.call().await;
     if let Err(Error::RateLimit(timestamp)) = cursor {
-        todo!("add miette handler for rate limit in first call: {timestamp}")
+        Err(AppError::RateLimit(timestamp))?
     }
 
     // loop over successful, non-empty responses
     while let Ok(ref mut response) = cursor {
-        // break if there are no users in the response
+        // stop if there are no users in the response
         if users.is_empty() {
             break;
         }
@@ -87,10 +96,12 @@ async fn flip_pages(mut pages: CursorIter<UserCursor>) -> miette::Result<Vec<Twi
         pages.next_cursor = response.next_cursor;
         cursor = pages.call().await;
 
-        // retry for rate limit
-        if let Err(Error::RateLimit(timestamp)) = cursor {
-            todo!("need to wait for rate limit: {timestamp}")
-        }
+        // check for errors before continuing
+        match cursor {
+            Err(Error::RateLimit(timestamp)) => Err(AppError::RateLimit(timestamp))?,
+            Err(_) => Err(AppError::UnknownError)?,
+            Ok(_) => continue,
+        };
     }
 
     // return accumulated users
@@ -100,14 +111,12 @@ async fn flip_pages(mut pages: CursorIter<UserCursor>) -> miette::Result<Vec<Twi
 /// Fetch my followers.
 async fn fetch_followers(token: &Token) -> miette::Result<Vec<TwitterUser>> {
     let followers = user::followers_of(ME, token).with_page_size(PAGE_SIZE as i32);
-
     flip_pages(followers).await
 }
 
 /// Fetch users I am following.
 async fn fetch_following(token: &Token) -> miette::Result<Vec<TwitterUser>> {
     let following = user::friends_of(ME, token).with_page_size(PAGE_SIZE as i32);
-
     flip_pages(following).await
 }
 
