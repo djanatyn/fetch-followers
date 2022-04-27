@@ -98,16 +98,14 @@ async fn flip_pages(mut pages: CursorIter<UserCursor>) -> miette::Result<Vec<Twi
 
 /// Fetch my followers.
 async fn fetch_followers(token: &Token) -> miette::Result<Vec<TwitterUser>> {
-    // fetch first set of followers
-    let followers = user::followers_of(ME, token).with_page_size(PAGE_SIZE.try_into().unwrap());
+    let followers = user::followers_of(ME, token).with_page_size(PAGE_SIZE as i32);
 
     flip_pages(followers).await
 }
 
-/// Fetch my followers.
+/// Fetch users I am following.
 async fn fetch_following(token: &Token) -> miette::Result<Vec<TwitterUser>> {
-    // fetch first set of followers
-    let following = user::friends_of(ME, token).with_page_size(PAGE_SIZE.try_into().unwrap());
+    let following = user::friends_of(ME, token).with_page_size(PAGE_SIZE as i32);
 
     flip_pages(following).await
 }
