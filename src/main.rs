@@ -1,5 +1,4 @@
-#![feature(async_closure)]
-
+use egg_mode::cursor::{CursorIter, UserCursor};
 use egg_mode::error::Error;
 use egg_mode::user::{self, TwitterUser};
 use egg_mode::{self, Token};
@@ -64,42 +63,53 @@ fn load_config() -> Result<Config, AppError> {
     }
 }
 
-/// Fetch my followers.
-async fn fetch_followers(token: &Token) -> miette::Result<Vec<TwitterUser>> {
-    // accumulate users
+/// Flip through paginated results of users.
+/// Used with `user::followers_of` and `user::friends_of`.
+async fn flip_pages(mut pages: CursorIter<UserCursor>) -> miette::Result<Vec<TwitterUser>> {
     let mut users: Vec<TwitterUser> = Vec::new();
-
-    // fetch first set of followers
-    let mut followers = user::followers_of(ME, token).with_page_size(PAGE_SIZE.try_into().unwrap());
-    let mut resp = followers.call().await;
-
-    // retry if we hit rate limit
-    if let Err(Error::RateLimit(timestamp)) = resp {
+    let mut cursor = pages.call().await;
+    if let Err(Error::RateLimit(timestamp)) = cursor {
         todo!("add miette handler for rate limit in first call: {timestamp}")
     }
 
     // loop over successful, non-empty responses
-    while let Ok(ref mut response) = resp {
+    while let Ok(ref mut response) = cursor {
         // break if there are no users in the response
         if users.is_empty() {
             break;
         }
 
+        // add users from page to results
         users.append(&mut response.users);
-        println!("{users:#?}");
 
         // get next page
-        followers.next_cursor = response.next_cursor;
-        resp = followers.call().await;
+        pages.next_cursor = response.next_cursor;
+        cursor = pages.call().await;
 
         // retry for rate limit
-        if let Err(Error::RateLimit(timestamp)) = resp {
+        if let Err(Error::RateLimit(timestamp)) = cursor {
             todo!("need to wait for rate limit: {timestamp}")
         }
     }
 
     // return accumulated users
     Ok(users)
+}
+
+/// Fetch my followers.
+async fn fetch_followers(token: &Token) -> miette::Result<Vec<TwitterUser>> {
+    // fetch first set of followers
+    let followers = user::followers_of(ME, token).with_page_size(PAGE_SIZE.try_into().unwrap());
+
+    flip_pages(followers).await
+}
+
+/// Fetch my followers.
+async fn fetch_following(token: &Token) -> miette::Result<Vec<TwitterUser>> {
+    // fetch first set of followers
+    let following = user::friends_of(ME, token).with_page_size(PAGE_SIZE.try_into().unwrap());
+
+    flip_pages(following).await
 }
 
 #[tokio::main]
@@ -111,8 +121,8 @@ async fn main() -> miette::Result<()> {
     let token = Token::Bearer(config.fetch_followers_token);
 
     // retrieve followers + following
-    // let following: Vec<TwitterUser> = fetch_following(&token).await?;
-    let followers: Vec<TwitterUser> = fetch_followers(&token).await?;
+    // let following = fetch_following(&token);
+    // let followers = fetch_followers(&token);
 
     // // output as JSON
     // let output = Output {
