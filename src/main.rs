@@ -2,6 +2,7 @@ use egg_mode::cursor::{CursorIter, UserCursor};
 use egg_mode::error::Error;
 use egg_mode::user::{self, TwitterUser};
 use egg_mode::{self, Token};
+use futures::future;
 use miette::{self, Diagnostic};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -119,14 +120,14 @@ async fn main() -> miette::Result<()> {
     let token = Token::Bearer(config.fetch_followers_token);
 
     // retrieve followers + following
-    // let following = fetch_following(&token);
-    // let followers = fetch_followers(&token);
+    let (following, followers) =
+        future::try_join(fetch_following(&token), fetch_followers(&token)).await?;
 
-    // // output as JSON
-    // let output = Output {
-    //     following,
-    //     followers,
-    // };
+    // output as JSON
+    let output = Output {
+        following,
+        followers,
+    };
 
     // let json = serde_json::to_string(&output).expect("failed to convert to JSON");
     // print!("{json}");
