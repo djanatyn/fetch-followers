@@ -1,3 +1,4 @@
+#![feature(async_closure)]
 use egg_mode::cursor::{CursorIter, UserCursor};
 use egg_mode::error::Error;
 use egg_mode::user::{self, TwitterUser};
@@ -6,6 +7,7 @@ use futures::future;
 use miette::{self, Diagnostic};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::{info_span, warn_span, Level};
 
 // TODO: paginated queries, checking rate limits
 // TODO: serialize to diesel database
@@ -63,10 +65,10 @@ struct Output {
 }
 
 /// Try to load Twitter API Bearer token from environment variables.
-fn load_config() -> Result<Config, AppError> {
+fn load_config() -> miette::Result<Config> {
     match envy::from_env::<Config>() {
         Ok(config) => Ok(config),
-        Err(error) => Err(AppError::MissingVariables(error)),
+        Err(error) => Err(AppError::MissingVariables(error))?,
     }
 }
 
@@ -110,37 +112,47 @@ async fn flip_pages(mut pages: CursorIter<UserCursor>) -> miette::Result<Vec<Twi
 
 /// Fetch my followers.
 async fn fetch_followers(token: &Token) -> miette::Result<Vec<TwitterUser>> {
-    let followers = user::followers_of(ME, token).with_page_size(PAGE_SIZE as i32);
-    flip_pages(followers).await
+    let span = warn_span!("fetch_followers");
+    span.in_scope(async || {
+        let followers = user::followers_of(ME, token).with_page_size(PAGE_SIZE as i32);
+        flip_pages(followers).await
+    })
+    .await
 }
 
 /// Fetch users I am following.
 async fn fetch_following(token: &Token) -> miette::Result<Vec<TwitterUser>> {
-    let following = user::friends_of(ME, token).with_page_size(PAGE_SIZE as i32);
-    flip_pages(following).await
+    let span = warn_span!("fetch_following");
+    span.in_scope(async || {
+        let following = user::friends_of(ME, token).with_page_size(PAGE_SIZE as i32);
+        flip_pages(following).await
+    })
+    .await
 }
 
 #[tokio::main]
 async fn main() -> miette::Result<()> {
     // load config, setup tracing
     let config = load_config()?;
+    tracing_subscriber::fmt::init();
+    let span = info_span!("session");
+    span.in_scope(async || {
+        // construct bearer token for twitter API
+        let token = Token::Bearer(config.fetch_followers_token);
 
-    // construct bearer token for twitter API
-    let token = Token::Bearer(config.fetch_followers_token);
+        // retrieve followers + following
+        let (following, followers) =
+            future::try_join(fetch_following(&token), fetch_followers(&token)).await?;
 
-    // retrieve followers + following
-    let (following, followers) =
-        future::try_join(fetch_following(&token), fetch_followers(&token)).await?;
+        // output as JSON
+        let output = Output {
+            following,
+            followers,
+        };
 
-    // output as JSON
-    let output = Output {
-        following,
-        followers,
-    };
+        println!("done");
 
-    // let json = serde_json::to_string(&output).expect("failed to convert to JSON");
-    // print!("{json}");
-
-    println!("done");
-    Ok(())
+        Ok(())
+    })
+    .await
 }
