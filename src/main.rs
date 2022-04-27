@@ -1,14 +1,11 @@
 #![feature(async_closure)]
 
+use egg_mode::error::Error;
 use egg_mode::user::{self, TwitterUser};
-use egg_mode::{self, Response, Token};
-use futures::StreamExt;
+use egg_mode::{self, Token};
 use miette::{self, Diagnostic};
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
-use std::time::Duration;
 use thiserror::Error;
-use tokio::time::sleep;
 
 // TODO: paginated queries, checking rate limits
 // TODO: serialize to diesel database
@@ -37,7 +34,6 @@ use tokio::time::sleep;
 // - bool verified
 
 const PAGE_SIZE: usize = 200;
-const SLEEP_DURATION: Duration = Duration::from_secs(3);
 const ME: &str = "djanatyn";
 
 #[derive(Serialize)]
@@ -68,63 +64,42 @@ fn load_config() -> Result<Config, AppError> {
     }
 }
 
-/// TODO: https://docs.rs/egg-mode/latest/egg_mode/cursor/struct.CursorIter.html#manual-paging
-/// ````
-/// let mut list = egg_mode::user::followers_of("rustlang", &token).with_page_size(20);
-/// let resp = list.call().await.unwrap();
-
-/// for user in resp.response.users {
-///     println!("{} (@{})", user.name, user.screen_name);
-/// }
-
-/// list.next_cursor = resp.response.next_cursor;
-/// let resp = list.call().await.unwrap();
-
-/// for user in resp.response.users {
-///     println!("{} (@{})", user.name, user.screen_name);
-/// }
-/// ```
-///
-
-/// Walk through paginated, enumerated results.
-async fn walk_pages(
-    mut friends: Vec<TwitterUser>,
-    (n, response): (usize, egg_mode::error::Result<Response<TwitterUser>>),
-) -> Vec<TwitterUser> {
-    // retrieve user
-    let user = match response {
-        Ok(response) => response.response,
-        Err(error) => panic!("failed to fetch all friends: {error}"),
-    };
-
-    // add user to list
-    friends.push(user.clone());
-
-    // sleep before making a network call
-    if n % PAGE_SIZE == 0 {
-        sleep(SLEEP_DURATION).await
-    };
-
-    // return accumulated users each step
-    friends
-}
-
-/// Fetch who I'm following.
-async fn fetch_following(token: &Token) -> miette::Result<Vec<TwitterUser>> {
-    Ok(user::friends_of(ME, token)
-        .with_page_size(PAGE_SIZE.try_into().unwrap())
-        .enumerate()
-        .fold(vec![], walk_pages)
-        .await)
-}
-
 /// Fetch my followers.
 async fn fetch_followers(token: &Token) -> miette::Result<Vec<TwitterUser>> {
-    Ok(user::followers_of(ME, token)
-        .with_page_size(PAGE_SIZE.try_into().unwrap())
-        .enumerate()
-        .fold(vec![], walk_pages)
-        .await)
+    // accumulate users
+    let mut users: Vec<TwitterUser> = Vec::new();
+
+    // fetch first set of followers
+    let mut followers = user::followers_of(ME, token).with_page_size(PAGE_SIZE.try_into().unwrap());
+    let mut resp = followers.call().await;
+
+    // retry if we hit rate limit
+    if let Err(Error::RateLimit(timestamp)) = resp {
+        todo!("add miette handler for rate limit in first call: {timestamp}")
+    }
+
+    // loop over successful, non-empty responses
+    while let Ok(ref mut response) = resp {
+        // break if there are no users in the response
+        if users.is_empty() {
+            break;
+        }
+
+        users.append(&mut response.users);
+        println!("{users:#?}");
+
+        // get next page
+        followers.next_cursor = response.next_cursor;
+        resp = followers.call().await;
+
+        // retry for rate limit
+        if let Err(Error::RateLimit(timestamp)) = resp {
+            todo!("need to wait for rate limit: {timestamp}")
+        }
+    }
+
+    // return accumulated users
+    Ok(users)
 }
 
 #[tokio::main]
@@ -137,7 +112,7 @@ async fn main() -> miette::Result<()> {
 
     // retrieve followers + following
     // let following: Vec<TwitterUser> = fetch_following(&token).await?;
-    // let followers: Vec<TwitterUser> = fetch_followers(&token).await?;
+    let followers: Vec<TwitterUser> = fetch_followers(&token).await?;
 
     // // output as JSON
     // let output = Output {
@@ -148,5 +123,6 @@ async fn main() -> miette::Result<()> {
     // let json = serde_json::to_string(&output).expect("failed to convert to JSON");
     // print!("{json}");
 
+    println!("done");
     Ok(())
 }
