@@ -1,45 +1,51 @@
 #![feature(async_closure)]
+
+use chrono::{NaiveDate, NaiveDateTime};
+
 use egg_mode::cursor::{CursorIter, UserCursor};
 use egg_mode::error::Error;
 use egg_mode::user::{self, TwitterUser};
 use egg_mode::{self, Token};
 use futures::future;
 use miette::{self, Diagnostic};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use thiserror::Error;
-use tracing::{info_span, warn_span, Level};
+use tracing::{info_span, warn_span};
 
-// TODO: paginated queries, checking rate limits
-// TODO: serialize to diesel database
-//
-// poll table:
-// - primary key id
-// - date start
-// - date finish
-// - count follower
-// - count following
-//
-// user table:
-// - primary key account id
-// - date account creation
-//
-// user snapshots:
-// - foreign key account id
-// - string screen_name
-// - string location
-// - string account description (you must replace URLs)
-// - string display url
-// - int follow count
-// - int following count
-// - int favorites count
-// - int status count
-// - bool verified
+#[derive(Debug)]
+/// A single session executing the program to fetch followers + following.
+pub struct Session {
+    pub id: i32,
+    pub start: NaiveDateTime,
+    pub finish: NaiveDateTime,
+    pub follower_count: i32,
+    pub following_count: i32,
+}
+
+#[derive(Debug)]
+pub struct User {
+    pub user_id: i32,
+    pub twitter_user_id: i32,
+    pub creation_date: NaiveDateTime,
+}
+
+#[derive(Debug)]
+pub struct UserSnapshot {
+    pub id: i32,
+    pub session_id: i32,
+    pub snapshot_time: NaiveDateTime,
+    pub screen_name: String,
+    pub location: String,
+    pub description: String,
+    pub url: Option<String>,
+    pub follower_count: i32,
+    pub following_count: i32,
+    pub status_count: i32,
+    pub verified: bool,
+}
 
 const PAGE_SIZE: usize = 200;
 const ME: &str = "djanatyn";
-
-#[derive(Serialize)]
-pub struct TwitterUserRef<'a>(#[serde(with = "TwitterUser")] &'a TwitterUser);
 
 #[derive(Deserialize, Debug)]
 struct Config {
@@ -58,7 +64,7 @@ enum AppError {
     UnknownError,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Debug)]
 struct Output {
     followers: Vec<TwitterUser>,
     following: Vec<TwitterUser>,

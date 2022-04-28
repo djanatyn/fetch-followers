@@ -19,3 +19,7 @@ tracing-subscriber = "0.3.9"
 # error handling
 thiserror = "1.0"
 miette = { version = "4.2", features = ["fancy"] }
+# timestamps
+chrono = "0.4"
+# database
+sqlx =  { version = "0.5", features = ["chrono", "sqlite", "runtime-tokio-native-tls"] }
