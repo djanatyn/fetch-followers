@@ -22,4 +22,4 @@ miette = { version = "4.2", features = ["fancy"] }
 # timestamps
 chrono = "0.4"
 # database
-sqlx =  { version = "0.5", features = ["chrono", "sqlite", "runtime-tokio-native-tls"] }
+rusqlite = { version = "0.27" }

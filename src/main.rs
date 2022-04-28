@@ -8,7 +8,9 @@ use egg_mode::user::{self, TwitterUser};
 use egg_mode::{self, Token};
 use futures::future;
 use miette::{self, Diagnostic};
+use rusqlite::Connection;
 use serde::Deserialize;
+use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{info_span, warn_span};
 
@@ -62,6 +64,12 @@ enum AppError {
     #[error("hit rate limit, must wait until: {0:?}")]
     RateLimit(i32),
 
+    #[error("failed to open database: {0:#?}")]
+    FailedOpenDatabase(rusqlite::Error),
+
+    #[error("failed to run init.sql: {0:#?}")]
+    FailedInitialization(rusqlite::Error),
+
     #[error("unknown error")]
     UnknownError,
 }
@@ -70,6 +78,18 @@ enum AppError {
 struct Output {
     followers: Vec<TwitterUser>,
     following: Vec<TwitterUser>,
+}
+
+fn init_db(path: PathBuf) -> miette::Result<Connection> {
+    let db: Connection = match Connection::open(&path) {
+        Err(e) => Err(AppError::FailedOpenDatabase(e))?,
+        Ok(db) => db,
+    };
+
+    match db.execute(include_str!("init.sql"), []) {
+        Err(e) => Err(AppError::FailedInitialization(e))?,
+        Ok(updated) => Ok(db),
+    }
 }
 
 /// Try to load Twitter API Bearer token from environment variables.
