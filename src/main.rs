@@ -23,6 +23,7 @@ pub struct Session {
 }
 
 #[derive(Debug)]
+/// A user account. There can be several snapshots for each user.
 pub struct User {
     pub user_id: i32,
     pub twitter_user_id: i32,
@@ -30,6 +31,7 @@ pub struct User {
 }
 
 #[derive(Debug)]
+/// A snapshot of a user's metadata taken during a session.
 pub struct UserSnapshot {
     pub id: i32,
     pub session_id: i32,
