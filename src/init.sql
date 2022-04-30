@@ -1,29 +1,27 @@
--- Add migration script here
 create table if not exists "sessions" (
-    id integer primary key not null,
-    start_time integer,
-    finish_time integer,
-    follower_count integer,
-    following_count integer
+    id INTEGER PRIMARY KEY NOT NULL,
+    start_time INTEGER,
+    finish_time INTEGER,
+    follower_count INTEGER,
+    following_count INTEGER
 );
 
-create table if not exists "user" (
-    id integer primary key not null,
-    user_id integer not null,
-    creation_date integer not null
+CREATE TABLE IF NOT EXISTS "user" (
+    id INTEGER PRIMARY KEY NOT NULL,
+    user_id INTEGER NOT NULL,
+    creation_date INTEGER NOT NULL
 );
 
 create table if not exists "snapshots" (
-    id integer primary key not null,
-    session_id integer not null,
-    snapshot_time integer not null,
-    screen_name NVARCHAR(80) not null
-    -- pub location: String,
-    -- pub description: String,
-    -- pub url: Option<String>,
-    -- pub follower_count: i32,
-    -- pub following_count: i32,
-    -- pub status_count: i32,
-    -- pub verified: bool,
-
+    id INTEGER PRIMARY KEY NOT NULL,
+    session_id INTEGER NOT NULL,
+    snapshot_time INTEGER NOT NULL,
+    screen_name TEXT NOT NULL,
+    location TEXT not null,
+    description TEXT,
+    url TEXT,
+    follower_count INTEGER NOT NULL,
+    following_count INTEGER NOT NULL,
+    status_count INTEGER NOT NULL,
+    verified INTEGER NOT NULL
 );

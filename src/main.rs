@@ -10,7 +10,7 @@ use futures::future;
 use miette::{self, Diagnostic};
 use rusqlite::Connection;
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::Path;
 use thiserror::Error;
 use tracing::{info_span, warn_span};
 
@@ -25,22 +25,16 @@ pub struct Session {
 }
 
 #[derive(Debug)]
-/// A user account. There can be several snapshots for each user.
-pub struct User {
-    pub user_id: i32,
-    pub twitter_user_id: i32,
-    pub creation_date: NaiveDateTime,
-}
-
-#[derive(Debug)]
 /// A snapshot of a user's metadata taken during a session.
 pub struct UserSnapshot {
     pub id: i32,
+    pub user_id: i32,
     pub session_id: i32,
     pub snapshot_time: NaiveDateTime,
+    pub created_date: NaiveDateTime,
     pub screen_name: String,
     pub location: String,
-    pub description: String,
+    pub description: Option<String>,
     pub url: Option<String>,
     pub follower_count: i32,
     pub following_count: i32,
@@ -80,16 +74,19 @@ struct Output {
     following: Vec<TwitterUser>,
 }
 
-fn init_db(path: PathBuf) -> miette::Result<Connection> {
-    let db: Connection = match Connection::open(&path) {
-        Err(e) => Err(AppError::FailedOpenDatabase(e))?,
-        Ok(db) => db,
-    };
+/// Run init.sql, a non-destructive script to create tables.
+fn init_db<P: AsRef<Path>>(path: P) -> miette::Result<Connection> {
+    warn_span!("init_db").in_scope(|| {
+        let db: Connection = match Connection::open(path) {
+            Err(e) => Err(AppError::FailedOpenDatabase(e))?,
+            Ok(db) => db,
+        };
 
-    match db.execute(include_str!("init.sql"), []) {
-        Err(e) => Err(AppError::FailedInitialization(e))?,
-        Ok(updated) => Ok(db),
-    }
+        match db.execute(include_str!("init.sql"), []) {
+            Err(e) => Err(AppError::FailedInitialization(e))?,
+            Ok(updated) => Ok(db),
+        }
+    })
 }
 
 /// Try to load Twitter API Bearer token from environment variables.
@@ -168,15 +165,17 @@ async fn main() -> miette::Result<()> {
         // construct bearer token for twitter API
         let token = Token::Bearer(config.fetch_followers_token);
 
-        // retrieve followers + following
-        let (following, followers) =
-            future::try_join(fetch_following(&token), fetch_followers(&token)).await?;
+        let db = init_db("followers.sqlite")?;
 
-        // output as JSON
-        let output = Output {
-            following,
-            followers,
-        };
+        // retrieve followers + following
+        // let (following, followers) =
+        //     future::try_join(fetch_following(&token), fetch_followers(&token)).await?;
+
+        // // output as JSON
+        // let output = Output {
+        //     following,
+        //     followers,
+        // };
 
         println!("done");
 
