@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use serde::Deserialize;
 use std::path::Path;
 use thiserror::Error;
-use tracing::{info_span, warn_span};
+use tracing::{event, info_span, warn_span, Level};
 
 #[derive(Debug)]
 /// A single session executing the program to fetch followers + following.
@@ -79,12 +79,18 @@ fn init_db<P: AsRef<Path>>(path: P) -> miette::Result<Connection> {
     warn_span!("init_db").in_scope(|| {
         let db: Connection = match Connection::open(path) {
             Err(e) => Err(AppError::FailedOpenDatabase(e))?,
-            Ok(db) => db,
+            Ok(db) => {
+                event!(Level::WARN, "opened db");
+                db
+            }
         };
 
         match db.execute(include_str!("init.sql"), []) {
             Err(e) => Err(AppError::FailedInitialization(e))?,
-            Ok(updated) => Ok(db),
+            Ok(updated) => {
+                event!(Level::WARN, updated, "ran init script");
+                Ok(db)
+            }
         }
     })
 }
