@@ -1,4 +1,4 @@
-create table if not exists "sessions" (
+CREATE TABLE IF NOT EXISTS "sessions" (
     id INTEGER PRIMARY KEY NOT NULL,
     start_time INTEGER,
     finish_time INTEGER,
@@ -6,16 +6,12 @@ create table if not exists "sessions" (
     following_count INTEGER
 );
 
-CREATE TABLE IF NOT EXISTS "user" (
+CREATE TABLE IF NOT EXISTS "snapshots" (
     id INTEGER PRIMARY KEY NOT NULL,
     user_id INTEGER NOT NULL,
-    creation_date INTEGER NOT NULL
-);
-
-create table if not exists "snapshots" (
-    id INTEGER PRIMARY KEY NOT NULL,
     session_id INTEGER NOT NULL,
     snapshot_time INTEGER NOT NULL,
+    created_date INTEGER NOT NULL,
     screen_name TEXT NOT NULL,
     location TEXT not null,
     description TEXT,
