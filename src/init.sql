@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
     snapshot_time INTEGER NOT NULL,
     created_date INTEGER NOT NULL,
     screen_name TEXT NOT NULL,
-    location TEXT not null,
+    location TEXT NOT NULL,
     description TEXT,
     url TEXT,
     follower_count INTEGER NOT NULL,
