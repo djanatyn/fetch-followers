@@ -1,6 +1,6 @@
 #![feature(async_closure)]
 
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{DateTime, Utc};
 
 use egg_mode::cursor::{CursorIter, UserCursor};
 use egg_mode::error::Error;
@@ -8,7 +8,7 @@ use egg_mode::user::{self, TwitterUser};
 use egg_mode::{self, Token};
 use futures::future;
 use miette::{self, Diagnostic};
-use rusqlite::Connection;
+use rusqlite::{named_params, Connection};
 use serde::Deserialize;
 use std::path::Path;
 use thiserror::Error;
@@ -18,8 +18,8 @@ use tracing::{event, info_span, warn_span, Level};
 /// A single session executing the program to fetch followers + following.
 pub struct Session {
     pub id: i32,
-    pub start: NaiveDateTime,
-    pub finish: NaiveDateTime,
+    pub start: DateTime<Utc>,
+    pub finish: DateTime<Utc>,
     pub follower_count: i32,
     pub following_count: i32,
 }
@@ -27,11 +27,10 @@ pub struct Session {
 #[derive(Debug)]
 /// A snapshot of a user's metadata taken during a session.
 pub struct UserSnapshot {
-    pub id: i32,
     pub user_id: i32,
     pub session_id: i32,
-    pub snapshot_time: NaiveDateTime,
-    pub created_date: NaiveDateTime,
+    pub snapshot_time: DateTime<Utc>,
+    pub created_date: DateTime<Utc>,
     pub screen_name: String,
     pub location: String,
     pub description: Option<String>,
@@ -93,6 +92,55 @@ fn init_db<P: AsRef<Path>>(path: P) -> miette::Result<Connection> {
             }
         }
     })
+}
+
+/// Given a connection, write a UserSnapshot to the database.
+fn write_snapshot(db: &Connection, snap: &UserSnapshot) -> miette::Result<usize> {
+    let result = db.execute(
+        "INSERT INTO snapshots (
+            user_id,
+            session_id,
+            snapshot_time,
+            created_date,
+            screen_name,
+            location,
+            description,
+            url,
+            follower_count,
+            following_count
+        ) VALUES (
+            :user_id,
+            :session_id,
+            :snapshot_time,
+            :created_date,
+            :screen_name,
+            :location,
+            :description,
+            :url,
+            :follower_count,
+            :following_count
+        )",
+        named_params! {
+            ":user_id": snap.user_id,
+            ":session_id": snap.session_id,
+            ":snapshot_time": snap.snapshot_time.timestamp(),
+            ":created_date": snap.created_date.timestamp(),
+            ":screen_name": snap.screen_name,
+            ":location": snap.location,
+            ":description": snap.description,
+            ":url": snap.url,
+            ":follower_count": snap.follower_count,
+            ":following_count": snap.following_count
+        },
+    );
+
+    match result {
+        Ok(updated) => {
+            event!(Level::WARN, updated, ?snap.screen_name, ?snap.user_id);
+            Ok(updated)
+        }
+        Err(e) => panic!("{e}"),
+    }
 }
 
 /// Try to load Twitter API Bearer token from environment variables.
