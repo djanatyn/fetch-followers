@@ -13,7 +13,6 @@ use serde::Deserialize;
 use std::path::Path;
 use thiserror::Error;
 use tracing::{event, info_span, warn_span, Level};
-
 #[derive(Debug)]
 /// A single session executing the program to fetch followers + following.
 pub struct Session {
@@ -28,6 +27,7 @@ pub struct Session {
 /// A snapshot of a user's metadata taken during a session.
 pub struct UserSnapshot {
     pub user_id: i32,
+    /// FOREIGN KEY (session_id) REFERENCES sessions (id)
     pub session_id: i32,
     pub snapshot_time: DateTime<Utc>,
     pub created_date: DateTime<Utc>,
@@ -95,6 +95,9 @@ fn init_db<P: AsRef<Path>>(path: P) -> miette::Result<Connection> {
 }
 
 /// Given a connection, write a UserSnapshot to the database.
+///
+/// snap.session_id should respect the foreign key constraint:
+/// FOREIGN KEY (session_id) REFERENCES sessions (id)
 fn write_snapshot(db: &Connection, snap: &UserSnapshot) -> miette::Result<usize> {
     let result = db.execute(
         "INSERT INTO snapshots (
