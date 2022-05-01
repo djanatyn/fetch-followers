@@ -1,7 +1,6 @@
 #![feature(async_closure)]
 
 use chrono::{DateTime, Utc};
-
 use egg_mode::cursor::{CursorIter, UserCursor};
 use egg_mode::error::Error;
 use egg_mode::user::{self, TwitterUser};
@@ -13,6 +12,10 @@ use serde::Deserialize;
 use std::path::Path;
 use thiserror::Error;
 use tracing::{event, info_span, warn_span, Level};
+
+/// TODO: create tokio thread to update database
+/// TODO: pass messages to db thread to update
+
 #[derive(Debug)]
 /// A single session executing the program to fetch followers + following.
 pub struct Session {
@@ -169,9 +172,12 @@ async fn flip_pages(mut pages: CursorIter<UserCursor>) -> miette::Result<Vec<Twi
     // loop over successful, non-empty responses
     while let Ok(ref mut response) = cursor {
         // stop if there are no users in the response
-        if users.is_empty() {
+        if response.users.is_empty() {
             break;
         }
+
+        let length = response.users.len();
+        event!(Level::WARN, length, "fetched page");
 
         // add users from page to results
         users.append(&mut response.users);
@@ -225,16 +231,14 @@ async fn main() -> miette::Result<()> {
         let db = init_db("followers.sqlite")?;
 
         // retrieve followers + following
-        // let (following, followers) =
-        //     future::try_join(fetch_following(&token), fetch_followers(&token)).await?;
+        let (following, followers) =
+            future::try_join(fetch_following(&token), fetch_followers(&token)).await?;
 
         // // output as JSON
-        // let output = Output {
-        //     following,
-        //     followers,
-        // };
-
-        println!("done");
+        let output = Output {
+            following,
+            followers,
+        };
 
         Ok(())
     })
