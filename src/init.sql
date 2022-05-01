@@ -3,7 +3,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     start_time INTEGER,
     finish_time INTEGER,
     follower_count INTEGER,
-    following_count INTEGER
+    following_count INTEGER,
+    session_state TEXT
+        CHECK (session_state IN ('STARTED', 'FINISHED', 'FAILED'))
+        NOT NULL DEFAULT 'STARTED'
 );
 
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -20,5 +23,20 @@ CREATE TABLE IF NOT EXISTS snapshots (
     following_count INTEGER NOT NULL,
     status_count INTEGER NOT NULL,
     verified INTEGER NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions (id)
+);
+
+
+CREATE TABLE IF NOT EXISTS following (
+    id INTEGER PRIMARY KEY NOT NULL,
+    user_id INTEGER NOT NULL,
+    session_id INTEGER NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions (id)
+);
+
+CREATE TABLE IF NOT EXISTS followers (
+    id INTEGER PRIMARY KEY NOT NULL,
+    user_id INTEGER NOT NULL,
+    session_id INTEGER NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions (id)
 );
