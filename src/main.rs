@@ -11,6 +11,7 @@ use rusqlite::{named_params, Connection};
 use serde::Deserialize;
 use std::path::Path;
 use thiserror::Error;
+use tokio::sync::mpsc;
 use tracing::{event, info_span, warn_span, Level};
 
 const PAGE_SIZE: usize = 200;
@@ -85,6 +86,18 @@ struct UserSnapshot {
     following_count: i32,
     status_count: i32,
     verified: bool,
+}
+
+/// Commands to send to DB worker.
+enum DatabaseCommand {
+    /// Store a user snapshot.
+    StoreSnapshot(UserSnapshot),
+    /// Store a user ID as a follower.
+    StoreFollower(i32),
+    /// Store a user ID as someone we're following.
+    SuccessfulSession,
+    /// Mark a session as failed.
+    FailedSession,
 }
 
 fn init_session(db: Connection) -> miette::Result<Session> {
