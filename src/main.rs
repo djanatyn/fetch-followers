@@ -64,8 +64,6 @@ enum SessionState {
 struct UserSnapshot {
     /// User ID (from Twitter, not the database)
     user_id: i64,
-    /// FOREIGN KEY (session_id) REFERENCES sessions (id)
-    session_id: i64,
     /// Time of snapshot.
     snapshot_time: DateTime<Utc>,
     /// Time account was created (returned from Twitter API).
@@ -88,16 +86,23 @@ struct UserSnapshot {
     verified: bool,
 }
 
+#[derive(Debug)]
+struct FollowerCount {
+    followers: i32,
+    following: i32,
+}
+
 /// Commands to send to DB worker.
 enum DatabaseCommand {
     /// Store a user snapshot.
     StoreSnapshot(UserSnapshot),
     /// Store a user ID as a follower.
     StoreFollower(i64),
+    /// Store a user ID as someone we are following.
+    StoreFollowing(i64),
     /// Store a user ID as someone we're following.
-    SuccessfulSession,
-    /// Mark a session as failed.
-    FailedSession,
+    SuccessfulSession(FollowerCount),
+    FailedSession(FollowerCount),
 }
 
 /// Run init.sql, a non-destructive script to create tables.
@@ -148,7 +153,7 @@ fn init_session(db: &Connection) -> miette::Result<i64> {
 ///
 /// snap.session_id should respect the foreign key constraint:
 /// FOREIGN KEY (session_id) REFERENCES sessions (id)
-fn write_snapshot(db: &Connection, snap: &UserSnapshot) -> miette::Result<usize> {
+fn write_snapshot(session_id: i32, db: &Connection, snap: &UserSnapshot) -> miette::Result<usize> {
     let result = db.execute(
         "INSERT INTO snapshots (
             user_id,
@@ -175,7 +180,7 @@ fn write_snapshot(db: &Connection, snap: &UserSnapshot) -> miette::Result<usize>
         )",
         named_params! {
             ":user_id": snap.user_id,
-            ":session_id": snap.session_id,
+            ":session_id": session_id,
             ":snapshot_time": snap.snapshot_time.timestamp(),
             ":created_date": snap.created_date.timestamp(),
             ":screen_name": snap.screen_name,
@@ -265,21 +270,48 @@ async fn fetch_following(token: &Token) -> miette::Result<Vec<TwitterUser>> {
     .await
 }
 
+fn store_follower(session_id: i32, db: &Connection, user_id: i64) -> miette::Result<usize> {
+    todo!();
+}
+
+fn store_following(session_id: i32, db: &Connection, user_id: i64) -> miette::Result<usize> {
+    todo!();
+}
+
+fn finalize_session(
+    session_id: i32,
+    db: &Connection,
+    count: &FollowerCount,
+) -> miette::Result<usize> {
+    todo!();
+}
+
+fn fail_session(sesssion_id: i32, db: &Connection, count: &FollowerCount) -> miette::Result<usize> {
+    todo!();
+}
+
 /// Interpreter task for DatabaseCommand channel. Drops Connection when complete.
-async fn db_manager(db: Connection, rx: &mut Receiver<DatabaseCommand>) -> miette::Result<()> {
+async fn db_manager(
+    session_id: i32,
+    db: Connection,
+    rx: &mut Receiver<DatabaseCommand>,
+) -> miette::Result<()> {
     while let Some(cmd) = rx.recv().await {
         match cmd {
             DatabaseCommand::StoreSnapshot(snapshot) => {
-                todo!();
+                write_snapshot(session_id, &db, &snapshot)?;
             }
-            DatabaseCommand::StoreFollower(id) => {
-                todo!();
+            DatabaseCommand::StoreFollower(user_id) => {
+                store_follower(session_id, &db, user_id)?;
             }
-            DatabaseCommand::SuccessfulSession => {
-                todo!();
+            DatabaseCommand::StoreFollowing(user_id) => {
+                store_following(session_id, &db, user_id)?;
             }
-            DatabaseCommand::FailedSession => {
-                todo!();
+            DatabaseCommand::SuccessfulSession(count) => {
+                finalize_session(session_id, &db, &count)?;
+            }
+            DatabaseCommand::FailedSession(count) => {
+                fail_session(session_id, &db, &count)?;
             }
         }
     }
@@ -307,7 +339,7 @@ async fn main() -> miette::Result<()> {
         let (following, followers, _) = future::try_join3(
             fetch_following(&token),
             fetch_followers(&token),
-            db_manager(db, &mut rx),
+            db_manager(session as i32, db, &mut rx),
         )
         .await?;
 
