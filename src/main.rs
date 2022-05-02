@@ -13,37 +13,6 @@ use std::path::Path;
 use thiserror::Error;
 use tracing::{event, info_span, warn_span, Level};
 
-/// TODO: create tokio thread to update database
-/// TODO: pass messages to db thread to update
-
-#[derive(Debug)]
-/// A single session executing the program to fetch followers + following.
-pub struct Session {
-    pub id: i32,
-    pub start: DateTime<Utc>,
-    pub finish: DateTime<Utc>,
-    pub follower_count: i32,
-    pub following_count: i32,
-}
-
-#[derive(Debug)]
-/// A snapshot of a user's metadata taken during a session.
-pub struct UserSnapshot {
-    pub user_id: i32,
-    /// FOREIGN KEY (session_id) REFERENCES sessions (id)
-    pub session_id: i32,
-    pub snapshot_time: DateTime<Utc>,
-    pub created_date: DateTime<Utc>,
-    pub screen_name: String,
-    pub location: String,
-    pub description: Option<String>,
-    pub url: Option<String>,
-    pub follower_count: i32,
-    pub following_count: i32,
-    pub status_count: i32,
-    pub verified: bool,
-}
-
 const PAGE_SIZE: usize = 200;
 const ME: &str = "djanatyn";
 
@@ -66,6 +35,9 @@ enum AppError {
     #[error("failed to run init.sql: {0:#?}")]
     FailedInitialization(rusqlite::Error),
 
+    #[error("could not initialize session: {0:#?}")]
+    FailiedInitSession(rusqlite::Error),
+
     #[error("unknown error")]
     UnknownError,
 }
@@ -74,6 +46,64 @@ enum AppError {
 struct Output {
     followers: Vec<TwitterUser>,
     following: Vec<TwitterUser>,
+}
+
+/// TODO: create tokio thread to update database
+/// TODO: pass messages to db thread to update
+
+#[derive(Debug)]
+enum SessionState {
+    Started,
+    Finished,
+    Failed,
+}
+
+#[derive(Debug)]
+/// A single session executing the program to fetch followers + following.
+struct Session {
+    id: i32,
+    start: Option<DateTime<Utc>>,
+    finish: Option<DateTime<Utc>>,
+    follower_count: Option<i32>,
+    following_count: Option<i32>,
+    session_state: SessionState,
+}
+
+#[derive(Debug)]
+/// A snapshot of a user's metadata taken during a session.
+struct UserSnapshot {
+    user_id: i32,
+    /// FOREIGN KEY (session_id) REFERENCES sessions (id)
+    session_id: i32,
+    snapshot_time: DateTime<Utc>,
+    created_date: DateTime<Utc>,
+    screen_name: String,
+    location: String,
+    description: Option<String>,
+    url: Option<String>,
+    follower_count: i32,
+    following_count: i32,
+    status_count: i32,
+    verified: bool,
+}
+
+fn init_session(db: Connection) -> miette::Result<Session> {
+    let now = Utc::now();
+    let rows = db.execute(
+        "INSERT INTO session (start_time) VALUES (:start)",
+        named_params! {
+            ":start": now.timestamp()
+        },
+    );
+
+    let updated = match rows {
+        Ok(updated) => updated,
+        Err(e) => Err(AppError::FailiedInitSession(e))?,
+    };
+
+    let row = db.last_insert_rowid();
+
+    todo!()
 }
 
 /// Run init.sql, a non-destructive script to create tables.
@@ -229,6 +259,7 @@ async fn main() -> miette::Result<()> {
         let token = Token::Bearer(config.fetch_followers_token);
 
         let db = init_db("followers.sqlite")?;
+        let session = init_session(db);
 
         // retrieve followers + following
         let (following, followers) =
