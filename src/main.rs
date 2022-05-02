@@ -257,7 +257,10 @@ async fn flip_pages(mut pages: CursorIter<UserCursor>) -> miette::Result<Vec<Twi
 }
 
 /// Fetch my followers.
-async fn fetch_followers(token: &Token) -> miette::Result<Vec<TwitterUser>> {
+async fn fetch_followers(
+    tx: Sender<DatabaseCommand>,
+    token: &Token,
+) -> miette::Result<Vec<TwitterUser>> {
     let span = warn_span!("fetch_followers");
     span.in_scope(async || {
         let followers = user::followers_of(ME, token).with_page_size(PAGE_SIZE as i32);
@@ -267,7 +270,10 @@ async fn fetch_followers(token: &Token) -> miette::Result<Vec<TwitterUser>> {
 }
 
 /// Fetch users I am following.
-async fn fetch_following(token: &Token) -> miette::Result<Vec<TwitterUser>> {
+async fn fetch_following(
+    tx: Sender<DatabaseCommand>,
+    token: &Token,
+) -> miette::Result<Vec<TwitterUser>> {
     let span = warn_span!("fetch_following");
     span.in_scope(async || {
         let following = user::friends_of(ME, token).with_page_size(PAGE_SIZE as i32);
@@ -339,12 +345,13 @@ async fn main() -> miette::Result<()> {
         let session = init_session(&db)?;
 
         // create channel for DatabaseCommand
-        let (tx, mut rx) = mpsc::channel::<DatabaseCommand>(32);
+        let (tx1, mut rx) = mpsc::channel::<DatabaseCommand>(32);
+        let tx2 = tx1.clone();
 
         // retrieve followers + following
         let (following, followers, _) = future::try_join3(
-            fetch_following(&token),
-            fetch_followers(&token),
+            fetch_following(tx1, &token),
+            fetch_followers(tx2, &token),
             db_manager(session as i32, db, &mut rx),
         )
         .await?;
