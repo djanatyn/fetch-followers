@@ -39,6 +39,9 @@ enum AppError {
     #[error("could not initialize session: {0:#?}")]
     FailiedInitSession(rusqlite::Error),
 
+    #[error("unexpected error inserting into DB: {0:#?}")]
+    FailedInsert(rusqlite::Error),
+
     #[error("unknown error")]
     UnknownError,
 }
@@ -95,7 +98,7 @@ struct FollowerCount {
 /// Commands to send to DB worker.
 enum DatabaseCommand {
     /// Store a user snapshot.
-    StoreSnapshot(UserSnapshot),
+    StoreSnapshot(Box<TwitterUser>),
     /// Store a user ID as a follower.
     StoreFollower(i64),
     /// Store a user ID as someone we are following.
@@ -217,7 +220,10 @@ fn load_config() -> miette::Result<Config> {
 
 /// Flip through paginated results of users.
 /// Used with `user::followers_of` and `user::friends_of`.
-async fn flip_pages(mut pages: CursorIter<UserCursor>) -> miette::Result<Vec<TwitterUser>> {
+async fn flip_pages(
+    tx: Sender<DatabaseCommand>,
+    mut pages: CursorIter<UserCursor>,
+) -> miette::Result<Vec<TwitterUser>> {
     // initialize user list
     let mut users: Vec<TwitterUser> = Vec::new();
 
@@ -264,7 +270,7 @@ async fn fetch_followers(
     let span = warn_span!("fetch_followers");
     span.in_scope(async || {
         let followers = user::followers_of(ME, token).with_page_size(PAGE_SIZE as i32);
-        flip_pages(followers).await
+        flip_pages(tx, followers).await
     })
     .await
 }
@@ -277,17 +283,49 @@ async fn fetch_following(
     let span = warn_span!("fetch_following");
     span.in_scope(async || {
         let following = user::friends_of(ME, token).with_page_size(PAGE_SIZE as i32);
-        flip_pages(following).await
+        flip_pages(tx, following).await
     })
     .await
 }
 
 fn store_follower(session_id: i32, db: &Connection, user_id: i64) -> miette::Result<usize> {
-    todo!();
+    let rows = db.execute(
+        "INSERT INTO followers (user_id, session_id) VALUES (:user_id, :session_id)",
+        named_params! {
+            ":user_id": user_id,
+            ":session_id": session_id,
+        },
+    );
+
+    let updated = match rows {
+        Err(e) => Err(AppError::FailedInsert(e))?,
+        Ok(updated) => {
+            event!(Level::WARN, user_id, "wrote follower");
+            updated
+        }
+    };
+
+    Ok(updated)
 }
 
 fn store_following(session_id: i32, db: &Connection, user_id: i64) -> miette::Result<usize> {
-    todo!();
+    let rows = db.execute(
+        "INSERT INTO following (user_id, session_id) VALUES (:user_id, :session_id)",
+        named_params! {
+            ":user_id": user_id,
+            ":session_id": session_id,
+        },
+    );
+
+    let updated = match rows {
+        Err(e) => Err(AppError::FailedInsert(e))?,
+        Ok(updated) => {
+            event!(Level::WARN, user_id, "wrote following");
+            updated
+        }
+    };
+
+    Ok(updated)
 }
 
 fn finalize_session(
@@ -302,6 +340,10 @@ fn fail_session(sesssion_id: i32, db: &Connection, count: &FollowerCount) -> mie
     todo!();
 }
 
+fn user_snapshot(user: &TwitterUser) -> UserSnapshot {
+    todo!("convert user to snapshot")
+}
+
 /// Interpreter task for DatabaseCommand channel. Drops Connection when complete.
 async fn db_manager(
     session_id: i32,
@@ -310,7 +352,8 @@ async fn db_manager(
 ) -> miette::Result<()> {
     while let Some(cmd) = rx.recv().await {
         match cmd {
-            DatabaseCommand::StoreSnapshot(snapshot) => {
+            DatabaseCommand::StoreSnapshot(user) => {
+                let snapshot = user_snapshot(&user);
                 write_snapshot(session_id, &db, &snapshot)?;
             }
             DatabaseCommand::StoreFollower(user_id) => {
