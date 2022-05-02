@@ -90,15 +90,18 @@ struct UserSnapshot {
 fn init_session(db: Connection) -> miette::Result<Session> {
     let now = Utc::now();
     let rows = db.execute(
-        "INSERT INTO session (start_time) VALUES (:start)",
+        "INSERT INTO sessions (start_time) VALUES (:start)",
         named_params! {
             ":start": now.timestamp()
         },
     );
 
     let updated = match rows {
-        Ok(updated) => updated,
         Err(e) => Err(AppError::FailiedInitSession(e))?,
+        Ok(updated) => {
+            event!(Level::WARN, updated, "created session in db");
+            updated
+        }
     };
 
     let row = db.last_insert_rowid();
@@ -259,7 +262,7 @@ async fn main() -> miette::Result<()> {
         let token = Token::Bearer(config.fetch_followers_token);
 
         let db = init_db("followers.sqlite")?;
-        let session = init_session(db);
+        let session = init_session(db)?;
 
         // retrieve followers + following
         let (following, followers) =
