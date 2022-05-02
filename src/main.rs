@@ -11,7 +11,7 @@ use rusqlite::{named_params, Connection};
 use serde::Deserialize;
 use std::path::Path;
 use thiserror::Error;
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, Receiver, Sender};
 use tracing::{event, info_span, warn_span, Level};
 
 const PAGE_SIZE: usize = 200;
@@ -100,28 +100,6 @@ enum DatabaseCommand {
     FailedSession,
 }
 
-fn init_session(db: Connection) -> miette::Result<Session> {
-    let now = Utc::now();
-    let rows = db.execute(
-        "INSERT INTO sessions (start_time) VALUES (:start)",
-        named_params! {
-            ":start": now.timestamp()
-        },
-    );
-
-    let updated = match rows {
-        Err(e) => Err(AppError::FailiedInitSession(e))?,
-        Ok(updated) => {
-            event!(Level::WARN, updated, "created session in db");
-            updated
-        }
-    };
-
-    let row = db.last_insert_rowid();
-
-    todo!()
-}
-
 /// Run init.sql, a non-destructive script to create tables.
 fn init_db<P: AsRef<Path>>(path: P) -> miette::Result<Connection> {
     warn_span!("init_db").in_scope(|| {
@@ -141,6 +119,29 @@ fn init_db<P: AsRef<Path>>(path: P) -> miette::Result<Connection> {
             }
         }
     })
+}
+
+/// Initialize a session, recording the current start time.
+fn init_session(db: &Connection) -> miette::Result<Session> {
+    let now = Utc::now();
+    let rows = db.execute(
+        "INSERT INTO sessions (start_time) VALUES (:start)",
+        named_params! {
+            ":start": now.timestamp()
+        },
+    );
+
+    let updated = match rows {
+        Err(e) => Err(AppError::FailiedInitSession(e))?,
+        Ok(updated) => {
+            event!(Level::WARN, updated, "created session in db");
+            updated
+        }
+    };
+
+    let row = db.last_insert_rowid();
+
+    todo!()
 }
 
 /// Given a connection, write a UserSnapshot to the database.
@@ -264,6 +265,28 @@ async fn fetch_following(token: &Token) -> miette::Result<Vec<TwitterUser>> {
     .await
 }
 
+/// Interpreter task for DatabaseCommand channel. Drops Connection when complete.
+async fn db_manager(db: Connection, rx: &mut Receiver<DatabaseCommand>) -> miette::Result<()> {
+    while let Some(cmd) = rx.recv().await {
+        match cmd {
+            DatabaseCommand::StoreSnapshot(snapshot) => {
+                todo!();
+            }
+            DatabaseCommand::StoreFollower(id) => {
+                todo!();
+            }
+            DatabaseCommand::SuccessfulSession => {
+                todo!();
+            }
+            DatabaseCommand::FailedSession => {
+                todo!();
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> miette::Result<()> {
     // load config, setup tracing
@@ -275,11 +298,18 @@ async fn main() -> miette::Result<()> {
         let token = Token::Bearer(config.fetch_followers_token);
 
         let db = init_db("followers.sqlite")?;
-        let session = init_session(db)?;
+        let session = init_session(&db)?;
+
+        // create channel for DatabaseCommand
+        let (tx, mut rx) = mpsc::channel::<DatabaseCommand>(32);
 
         // retrieve followers + following
-        let (following, followers) =
-            future::try_join(fetch_following(&token), fetch_followers(&token)).await?;
+        let (following, followers, _) = future::try_join3(
+            fetch_following(&token),
+            fetch_followers(&token),
+            db_manager(db, &mut rx),
+        )
+        .await?;
 
         // // output as JSON
         let output = Output {
