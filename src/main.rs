@@ -60,31 +60,31 @@ enum SessionState {
 }
 
 #[derive(Debug)]
-/// A single session executing the program to fetch followers + following.
-struct Session {
-    id: i32,
-    start: Option<DateTime<Utc>>,
-    finish: Option<DateTime<Utc>>,
-    follower_count: Option<i32>,
-    following_count: Option<i32>,
-    session_state: SessionState,
-}
-
-#[derive(Debug)]
 /// A snapshot of a user's metadata taken during a session.
 struct UserSnapshot {
-    user_id: i32,
+    /// User ID (from Twitter, not the database)
+    user_id: i64,
     /// FOREIGN KEY (session_id) REFERENCES sessions (id)
-    session_id: i32,
+    session_id: i64,
+    /// Time of snapshot.
     snapshot_time: DateTime<Utc>,
+    /// Time account was created (returned from Twitter API).
     created_date: DateTime<Utc>,
+    /// Screen name for account.
     screen_name: String,
-    location: String,
+    /// Location of account.
+    location: Option<String>,
+    /// Description of account.
     description: Option<String>,
+    /// URL listed in account profile.
     url: Option<String>,
-    follower_count: i32,
-    following_count: i32,
-    status_count: i32,
+    /// Number of followers at time of snapshot.
+    follower_count: i64,
+    /// Number of users this account is following at time of snapshot.
+    following_count: i64,
+    /// Number of statuses posted by this account.
+    status_count: i64,
+    /// Whether this account is verified.
     verified: bool,
 }
 
@@ -93,7 +93,7 @@ enum DatabaseCommand {
     /// Store a user snapshot.
     StoreSnapshot(UserSnapshot),
     /// Store a user ID as a follower.
-    StoreFollower(i32),
+    StoreFollower(i64),
     /// Store a user ID as someone we're following.
     SuccessfulSession,
     /// Mark a session as failed.
@@ -122,7 +122,9 @@ fn init_db<P: AsRef<Path>>(path: P) -> miette::Result<Connection> {
 }
 
 /// Initialize a session, recording the current start time.
-fn init_session(db: &Connection) -> miette::Result<Session> {
+///
+/// Returns ID of Session within the database.
+fn init_session(db: &Connection) -> miette::Result<i64> {
     let now = Utc::now();
     let rows = db.execute(
         "INSERT INTO sessions (start_time) VALUES (:start)",
@@ -139,9 +141,7 @@ fn init_session(db: &Connection) -> miette::Result<Session> {
         }
     };
 
-    let row = db.last_insert_rowid();
-
-    todo!()
+    Ok(db.last_insert_rowid())
 }
 
 /// Given a connection, write a UserSnapshot to the database.
