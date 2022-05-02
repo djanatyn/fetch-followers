@@ -165,7 +165,9 @@ fn write_snapshot(session_id: i32, db: &Connection, snap: &UserSnapshot) -> miet
             description,
             url,
             follower_count,
-            following_count
+            following_count,
+            status_count,
+            verified
         ) VALUES (
             :user_id,
             :session_id,
@@ -176,7 +178,9 @@ fn write_snapshot(session_id: i32, db: &Connection, snap: &UserSnapshot) -> miet
             :description,
             :url,
             :follower_count,
-            :following_count
+            :following_count,
+            :status_count,
+            :verified
         )",
         named_params! {
             ":user_id": snap.user_id,
@@ -188,7 +192,9 @@ fn write_snapshot(session_id: i32, db: &Connection, snap: &UserSnapshot) -> miet
             ":description": snap.description,
             ":url": snap.url,
             ":follower_count": snap.follower_count,
-            ":following_count": snap.following_count
+            ":following_count": snap.following_count,
+            ":status_count": snap.status_count,
+            ":verified": snap.verified
         },
     );
 
