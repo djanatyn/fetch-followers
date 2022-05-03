@@ -39,6 +39,9 @@ enum AppError {
     #[error("could not initialize session: {0:#?}")]
     FailiedInitSession(rusqlite::Error),
 
+    #[error("failed to finalize session: {0:#?}")]
+    FailedFinalize(rusqlite::Error),
+
     #[error("unexpected error inserting into DB: {0:#?}")]
     FailedInsert(rusqlite::Error),
 
@@ -343,12 +346,40 @@ fn store_following(session_id: i32, db: &Connection, user_id: u64) -> miette::Re
 }
 
 fn finalize_session(session_id: i32, db: &Connection) -> miette::Result<usize> {
-    todo!();
+    let now = Utc::now();
+    let mut update = db
+        .prepare("UPDATE sessions SET finish_time = ?, session_state = 'FINISHED' WHERE id = ?")
+        .expect("failed to preapre statement");
+
+    let rows = update.execute([now.timestamp(), session_id as i64]);
+    let updated = match rows {
+        Err(e) => Err(AppError::FailedFinalize(e))?,
+        Ok(updated) => {
+            event!(Level::WARN, "finalized session");
+            updated
+        }
+    };
+
+    Ok(updated)
 }
 
 /// Mark a session as failed, and record the number of
-fn fail_session(sesssion_id: i32, db: &Connection) -> miette::Result<usize> {
-    todo!();
+fn fail_session(session_id: i32, db: &Connection) -> miette::Result<usize> {
+    let now = Utc::now();
+    let mut update = db
+        .prepare("UPDATE sessions SET finish_time = ?, session_state = 'FAILED' WHERE id = ?")
+        .expect("failed to preapre statement");
+
+    let rows = update.execute([now.timestamp(), session_id as i64]);
+    let updated = match rows {
+        Err(e) => Err(AppError::FailedFinalize(e))?,
+        Ok(updated) => {
+            event!(Level::WARN, "finalized session");
+            updated
+        }
+    };
+
+    Ok(updated)
 }
 
 /// Generate a UserSnapshot from egg_mode::TwitterUser.
@@ -370,30 +401,29 @@ fn user_snapshot(user: &TwitterUser) -> UserSnapshot {
     }
 }
 
-/// Interpreter task for DatabaseCommand channel. Drops Connection when complete.
+/// Interpreter task for DatabaseCommand channel.
 async fn db_manager(
     session_id: i32,
-    db: Connection,
+    db: &Connection,
     rx: &mut Receiver<DatabaseCommand>,
 ) -> miette::Result<()> {
     while let Some(cmd) = rx.recv().await {
         match cmd {
             DatabaseCommand::StoreSnapshot(snapshot) => {
-                write_snapshot(session_id, &db, &snapshot)?;
+                write_snapshot(session_id, db, &snapshot)?;
             }
             DatabaseCommand::StoreFollower(user_id) => {
-                store_follower(session_id, &db, user_id)?;
+                store_follower(session_id, db, user_id)?;
             }
             DatabaseCommand::StoreFollowing(user_id) => {
-                store_following(session_id, &db, user_id)?;
+                store_following(session_id, db, user_id)?;
             }
             DatabaseCommand::FailedSession => {
-                fail_session(session_id, &db)?;
+                fail_session(session_id, db)?;
             }
         }
     }
 
-    finalize_session(session_id, &db)?;
     Ok(())
 }
 
@@ -418,9 +448,21 @@ async fn main() -> miette::Result<()> {
         let (following, followers, _) = future::try_join3(
             fetch_following(tx1, &token),
             fetch_followers(tx2, &token),
-            db_manager(session as i32, db, &mut rx),
+            db_manager(session as i32, &db, &mut rx),
         )
         .await?;
+
+        let follower_count = followers.len();
+        let following_count = following.len();
+        event!(
+            Level::WARN,
+            follower_count,
+            following_count,
+            "finished session, finalizing"
+        );
+
+        finalize_session(session as i32, &db)?;
+        event!(Level::WARN, "complete :)");
 
         Ok(())
     })
