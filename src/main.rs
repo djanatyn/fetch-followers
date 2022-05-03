@@ -66,7 +66,7 @@ enum SessionState {
 /// A snapshot of a user's metadata taken during a session.
 struct UserSnapshot {
     /// User ID (from Twitter, not the database)
-    user_id: i64,
+    user_id: u64,
     /// Time of snapshot.
     snapshot_time: DateTime<Utc>,
     /// Time account was created (returned from Twitter API).
@@ -80,11 +80,11 @@ struct UserSnapshot {
     /// URL listed in account profile.
     url: Option<String>,
     /// Number of followers at time of snapshot.
-    follower_count: i64,
+    follower_count: i32,
     /// Number of users this account is following at time of snapshot.
-    following_count: i64,
+    following_count: i32,
     /// Number of statuses posted by this account.
-    status_count: i64,
+    status_count: i32,
     /// Whether this account is verified.
     verified: bool,
 }
@@ -341,7 +341,21 @@ fn fail_session(sesssion_id: i32, db: &Connection, count: &FollowerCount) -> mie
 }
 
 fn user_snapshot(user: &TwitterUser) -> UserSnapshot {
-    todo!("convert user to snapshot")
+    let now = Utc::now();
+
+    UserSnapshot {
+        user_id: user.id,
+        snapshot_time: now,
+        created_date: user.created_at, // DateTime<Utc>,
+        screen_name: (*user.screen_name).to_string(),
+        location: user.location.clone(),
+        description: user.description.clone(),
+        url: user.url.clone(),
+        follower_count: user.followers_count,
+        following_count: user.friends_count,
+        status_count: user.statuses_count,
+        verified: user.verified,
+    }
 }
 
 /// Interpreter task for DatabaseCommand channel. Drops Connection when complete.
