@@ -304,6 +304,7 @@ async fn fetch_following(
     .await
 }
 
+/// Record a user as a follower.
 fn store_follower(session_id: i32, db: &Connection, user_id: u64) -> miette::Result<usize> {
     let rows = db.execute(
         "INSERT INTO followers (user_id, session_id) VALUES (:user_id, :session_id)",
@@ -324,6 +325,7 @@ fn store_follower(session_id: i32, db: &Connection, user_id: u64) -> miette::Res
     Ok(updated)
 }
 
+/// Record a user as someone you're following.
 fn store_following(session_id: i32, db: &Connection, user_id: u64) -> miette::Result<usize> {
     let rows = db.execute(
         "INSERT INTO following (user_id, session_id) VALUES (:user_id, :session_id)",
@@ -344,6 +346,7 @@ fn store_following(session_id: i32, db: &Connection, user_id: u64) -> miette::Re
     Ok(updated)
 }
 
+/// Mark session as failed, recording the time.
 fn finalize_session(session_id: i32, db: &Connection) -> miette::Result<usize> {
     let now = Utc::now();
     let mut update = db
@@ -362,7 +365,7 @@ fn finalize_session(session_id: i32, db: &Connection) -> miette::Result<usize> {
     Ok(updated)
 }
 
-/// Mark a session as failed, and record the number of
+/// Mark a session as failed, recording the time.
 fn fail_session(session_id: i32, db: &Connection) -> miette::Result<usize> {
     let now = Utc::now();
     let mut update = db
@@ -373,7 +376,7 @@ fn fail_session(session_id: i32, db: &Connection) -> miette::Result<usize> {
     let updated = match rows {
         Err(e) => Err(Error::FailedFinalize(e))?,
         Ok(updated) => {
-            event!(Level::WARN, "finalized session");
+            event!(Level::WARN, "recorded session as failed");
             updated
         }
     };
