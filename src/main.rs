@@ -47,19 +47,9 @@ enum AppError {
 }
 
 #[derive(Debug)]
-struct Output {
-    followers: Vec<TwitterUser>,
-    following: Vec<TwitterUser>,
-}
-
-/// TODO: create tokio thread to update database
-/// TODO: pass messages to db thread to update
-
-#[derive(Debug)]
-enum SessionState {
-    Started,
-    Finished,
-    Failed,
+enum UserType {
+    Followers,
+    Following,
 }
 
 #[derive(Debug)]
@@ -90,22 +80,16 @@ struct UserSnapshot {
 }
 
 #[derive(Debug)]
-struct FollowerCount {
-    followers: i32,
-    following: i32,
-}
-
 /// Commands to send to DB worker.
 enum DatabaseCommand {
     /// Store a user snapshot.
-    StoreSnapshot(Box<TwitterUser>),
+    StoreSnapshot(UserSnapshot),
     /// Store a user ID as a follower.
-    StoreFollower(i64),
+    StoreFollower(u64),
     /// Store a user ID as someone we are following.
-    StoreFollowing(i64),
-    /// Store a user ID as someone we're following.
-    SuccessfulSession(FollowerCount),
-    FailedSession(FollowerCount),
+    StoreFollowing(u64),
+    /// Mark a session as failed.
+    FailedSession,
 }
 
 /// Run init.sql, a non-destructive script to create tables.
@@ -141,12 +125,9 @@ fn init_session(db: &Connection) -> miette::Result<i64> {
         },
     );
 
-    let updated = match rows {
+    match rows {
         Err(e) => Err(AppError::FailiedInitSession(e))?,
-        Ok(updated) => {
-            event!(Level::WARN, updated, "created session in db");
-            updated
-        }
+        Ok(updated) => event!(Level::WARN, updated, "created session in db"),
     };
 
     Ok(db.last_insert_rowid())
@@ -156,9 +137,12 @@ fn init_session(db: &Connection) -> miette::Result<i64> {
 ///
 /// snap.session_id should respect the foreign key constraint:
 /// FOREIGN KEY (session_id) REFERENCES sessions (id)
+///
+/// We may get the same user as both a follower and following. In that case,
+/// "INSERT OR IGNORE" will respect the unique constraint for session_id.
 fn write_snapshot(session_id: i32, db: &Connection, snap: &UserSnapshot) -> miette::Result<usize> {
     let result = db.execute(
-        "INSERT INTO snapshots (
+        "INSERT OR IGNORE INTO snapshots (
             user_id,
             session_id,
             snapshot_time,
@@ -223,6 +207,7 @@ fn load_config() -> miette::Result<Config> {
 async fn flip_pages(
     tx: Sender<DatabaseCommand>,
     mut pages: CursorIter<UserCursor>,
+    user_type: UserType,
 ) -> miette::Result<Vec<TwitterUser>> {
     // initialize user list
     let mut users: Vec<TwitterUser> = Vec::new();
@@ -230,6 +215,9 @@ async fn flip_pages(
     // check for rate limit on first call
     let mut cursor = pages.call().await;
     if let Err(Error::RateLimit(timestamp)) = cursor {
+        tx.send(DatabaseCommand::FailedSession)
+            .await
+            .expect("send error");
         Err(AppError::RateLimit(timestamp))?
     }
 
@@ -243,6 +231,22 @@ async fn flip_pages(
         let length = response.users.len();
         event!(Level::WARN, length, "fetched page");
 
+        for user in &response.users {
+            // write the user snapshot
+            let snapshot = user_snapshot(user);
+            tx.send(DatabaseCommand::StoreSnapshot(snapshot))
+                .await
+                .expect("send error");
+
+            // after that, record the user as follower / following
+            let msg = match user_type {
+                UserType::Followers => DatabaseCommand::StoreFollower(user.id),
+                UserType::Following => DatabaseCommand::StoreFollowing(user.id),
+            };
+
+            tx.send(msg).await.expect("send error");
+        }
+
         // add users from page to results
         users.append(&mut response.users);
 
@@ -252,8 +256,18 @@ async fn flip_pages(
 
         // check for errors before continuing
         match cursor {
-            Err(Error::RateLimit(timestamp)) => Err(AppError::RateLimit(timestamp))?,
-            Err(_) => Err(AppError::UnknownError)?,
+            Err(Error::RateLimit(timestamp)) => {
+                tx.send(DatabaseCommand::FailedSession)
+                    .await
+                    .expect("send error");
+                Err(AppError::RateLimit(timestamp))?
+            }
+            Err(_) => {
+                tx.send(DatabaseCommand::FailedSession)
+                    .await
+                    .expect("send error");
+                Err(AppError::UnknownError)?
+            }
             Ok(_) => continue,
         };
     }
@@ -270,7 +284,7 @@ async fn fetch_followers(
     let span = warn_span!("fetch_followers");
     span.in_scope(async || {
         let followers = user::followers_of(ME, token).with_page_size(PAGE_SIZE as i32);
-        flip_pages(tx, followers).await
+        flip_pages(tx, followers, UserType::Followers).await
     })
     .await
 }
@@ -283,12 +297,12 @@ async fn fetch_following(
     let span = warn_span!("fetch_following");
     span.in_scope(async || {
         let following = user::friends_of(ME, token).with_page_size(PAGE_SIZE as i32);
-        flip_pages(tx, following).await
+        flip_pages(tx, following, UserType::Following).await
     })
     .await
 }
 
-fn store_follower(session_id: i32, db: &Connection, user_id: i64) -> miette::Result<usize> {
+fn store_follower(session_id: i32, db: &Connection, user_id: u64) -> miette::Result<usize> {
     let rows = db.execute(
         "INSERT INTO followers (user_id, session_id) VALUES (:user_id, :session_id)",
         named_params! {
@@ -308,7 +322,7 @@ fn store_follower(session_id: i32, db: &Connection, user_id: i64) -> miette::Res
     Ok(updated)
 }
 
-fn store_following(session_id: i32, db: &Connection, user_id: i64) -> miette::Result<usize> {
+fn store_following(session_id: i32, db: &Connection, user_id: u64) -> miette::Result<usize> {
     let rows = db.execute(
         "INSERT INTO following (user_id, session_id) VALUES (:user_id, :session_id)",
         named_params! {
@@ -328,18 +342,16 @@ fn store_following(session_id: i32, db: &Connection, user_id: i64) -> miette::Re
     Ok(updated)
 }
 
-fn finalize_session(
-    session_id: i32,
-    db: &Connection,
-    count: &FollowerCount,
-) -> miette::Result<usize> {
+fn finalize_session(session_id: i32, db: &Connection) -> miette::Result<usize> {
     todo!();
 }
 
-fn fail_session(sesssion_id: i32, db: &Connection, count: &FollowerCount) -> miette::Result<usize> {
+/// Mark a session as failed, and record the number of
+fn fail_session(sesssion_id: i32, db: &Connection) -> miette::Result<usize> {
     todo!();
 }
 
+/// Generate a UserSnapshot from egg_mode::TwitterUser.
 fn user_snapshot(user: &TwitterUser) -> UserSnapshot {
     let now = Utc::now();
 
@@ -366,8 +378,7 @@ async fn db_manager(
 ) -> miette::Result<()> {
     while let Some(cmd) = rx.recv().await {
         match cmd {
-            DatabaseCommand::StoreSnapshot(user) => {
-                let snapshot = user_snapshot(&user);
+            DatabaseCommand::StoreSnapshot(snapshot) => {
                 write_snapshot(session_id, &db, &snapshot)?;
             }
             DatabaseCommand::StoreFollower(user_id) => {
@@ -376,15 +387,13 @@ async fn db_manager(
             DatabaseCommand::StoreFollowing(user_id) => {
                 store_following(session_id, &db, user_id)?;
             }
-            DatabaseCommand::SuccessfulSession(count) => {
-                finalize_session(session_id, &db, &count)?;
-            }
-            DatabaseCommand::FailedSession(count) => {
-                fail_session(session_id, &db, &count)?;
+            DatabaseCommand::FailedSession => {
+                fail_session(session_id, &db)?;
             }
         }
     }
 
+    finalize_session(session_id, &db)?;
     Ok(())
 }
 
@@ -412,12 +421,6 @@ async fn main() -> miette::Result<()> {
             db_manager(session as i32, db, &mut rx),
         )
         .await?;
-
-        // // output as JSON
-        let output = Output {
-            following,
-            followers,
-        };
 
         Ok(())
     })
