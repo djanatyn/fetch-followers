@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS snapshots (
     id INTEGER PRIMARY KEY NOT NULL,
     user_id INTEGER NOT NULL,
-    session_id INTEGER UNIQUE NOT NULL,
+    session_id INTEGER NOT NULL,
     snapshot_time INTEGER NOT NULL,
     created_date INTEGER NOT NULL,
     screen_name TEXT NOT NULL,
@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
     following_count INTEGER NOT NULL,
     status_count INTEGER NOT NULL,
     verified INTEGER NOT NULL,
+    UNIQUE(user_id, session_id) ON CONFLICT REPLACE,
     FOREIGN KEY (session_id) REFERENCES sessions (id)
 );
 
