@@ -2,8 +2,6 @@ CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY NOT NULL,
     start_time INTEGER,
     finish_time INTEGER,
-    follower_count INTEGER,
-    following_count INTEGER,
     session_state TEXT
         CHECK (session_state IN ('STARTED', 'FINISHED', 'FAILED'))
         NOT NULL DEFAULT 'STARTED'
@@ -12,7 +10,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS snapshots (
     id INTEGER PRIMARY KEY NOT NULL,
     user_id INTEGER NOT NULL,
-    session_id INTEGER NOT NULL,
+    session_id INTEGER UNIQUE NOT NULL,
     snapshot_time INTEGER NOT NULL,
     created_date INTEGER NOT NULL,
     screen_name TEXT NOT NULL,
