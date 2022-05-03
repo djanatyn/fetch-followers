@@ -2,7 +2,6 @@
 
 use chrono::{DateTime, Utc};
 use egg_mode::cursor::{CursorIter, UserCursor};
-use egg_mode::error::Error;
 use egg_mode::user::{self, TwitterUser};
 use egg_mode::{self, Token};
 use futures::future;
@@ -23,7 +22,7 @@ struct Config {
 }
 
 #[derive(Error, Debug, Diagnostic)]
-enum AppError {
+enum Error {
     #[error("failed to load environment variable: {0:?}")]
     MissingVariables(envy::Error),
 
@@ -46,7 +45,7 @@ enum AppError {
     FailedInsert(rusqlite::Error),
 
     #[error("unknown error")]
-    UnknownError,
+    Unknown,
 }
 
 #[derive(Debug)]
@@ -99,7 +98,7 @@ enum DatabaseCommand {
 fn init_db<P: AsRef<Path>>(path: P) -> miette::Result<Connection> {
     warn_span!("init_db").in_scope(|| {
         let db: Connection = match Connection::open(path) {
-            Err(e) => Err(AppError::FailedOpenDatabase(e))?,
+            Err(e) => Err(Error::FailedOpenDatabase(e))?,
             Ok(db) => {
                 event!(Level::WARN, "opened db");
                 db
@@ -107,7 +106,7 @@ fn init_db<P: AsRef<Path>>(path: P) -> miette::Result<Connection> {
         };
 
         match db.execute(include_str!("init.sql"), []) {
-            Err(e) => Err(AppError::FailedInitialization(e))?,
+            Err(e) => Err(Error::FailedInitialization(e))?,
             Ok(updated) => {
                 event!(Level::WARN, updated, "ran init script");
                 Ok(db)
@@ -129,7 +128,7 @@ fn init_session(db: &Connection) -> miette::Result<i64> {
     );
 
     match rows {
-        Err(e) => Err(AppError::FailiedInitSession(e))?,
+        Err(e) => Err(Error::FailiedInitSession(e))?,
         Ok(updated) => event!(Level::WARN, updated, "created session in db"),
     };
 
@@ -142,7 +141,7 @@ fn init_session(db: &Connection) -> miette::Result<i64> {
 /// FOREIGN KEY (session_id) REFERENCES sessions (id)
 ///
 /// We may get the same user as both a follower and following. In that case,
-/// "INSERT OR IGNORE" will respect the unique constraint for session_id.
+/// "INSERT OR IGNORE" will respect the unique constraints.
 fn write_snapshot(session_id: i32, db: &Connection, snap: &UserSnapshot) -> miette::Result<usize> {
     let result = db.execute(
         "INSERT OR IGNORE INTO snapshots (
@@ -201,7 +200,7 @@ fn write_snapshot(session_id: i32, db: &Connection, snap: &UserSnapshot) -> miet
 fn load_config() -> miette::Result<Config> {
     match envy::from_env::<Config>() {
         Ok(config) => Ok(config),
-        Err(error) => Err(AppError::MissingVariables(error))?,
+        Err(error) => Err(Error::MissingVariables(error))?,
     }
 }
 
@@ -217,11 +216,11 @@ async fn flip_pages(
 
     // check for rate limit on first call
     let mut cursor = pages.call().await;
-    if let Err(Error::RateLimit(timestamp)) = cursor {
+    if let Err(egg_mode::error::Error::RateLimit(timestamp)) = cursor {
         tx.send(DatabaseCommand::FailedSession)
             .await
             .expect("send error");
-        Err(AppError::RateLimit(timestamp))?
+        Err(Error::RateLimit(timestamp))?
     }
 
     // loop over successful, non-empty responses
@@ -259,17 +258,17 @@ async fn flip_pages(
 
         // check for errors before continuing
         match cursor {
-            Err(Error::RateLimit(timestamp)) => {
+            Err(egg_mode::error::Error::RateLimit(timestamp)) => {
                 tx.send(DatabaseCommand::FailedSession)
                     .await
                     .expect("send error");
-                Err(AppError::RateLimit(timestamp))?
+                Err(Error::RateLimit(timestamp))?
             }
             Err(_) => {
                 tx.send(DatabaseCommand::FailedSession)
                     .await
                     .expect("send error");
-                Err(AppError::UnknownError)?
+                Err(Error::Unknown)?
             }
             Ok(_) => continue,
         };
@@ -315,7 +314,7 @@ fn store_follower(session_id: i32, db: &Connection, user_id: u64) -> miette::Res
     );
 
     let updated = match rows {
-        Err(e) => Err(AppError::FailedInsert(e))?,
+        Err(e) => Err(Error::FailedInsert(e))?,
         Ok(updated) => {
             event!(Level::WARN, user_id, "wrote follower");
             updated
@@ -335,7 +334,7 @@ fn store_following(session_id: i32, db: &Connection, user_id: u64) -> miette::Re
     );
 
     let updated = match rows {
-        Err(e) => Err(AppError::FailedInsert(e))?,
+        Err(e) => Err(Error::FailedInsert(e))?,
         Ok(updated) => {
             event!(Level::WARN, user_id, "wrote following");
             updated
@@ -353,7 +352,7 @@ fn finalize_session(session_id: i32, db: &Connection) -> miette::Result<usize> {
 
     let rows = update.execute([now.timestamp(), session_id as i64]);
     let updated = match rows {
-        Err(e) => Err(AppError::FailedFinalize(e))?,
+        Err(e) => Err(Error::FailedFinalize(e))?,
         Ok(updated) => {
             event!(Level::WARN, "finalized session");
             updated
@@ -372,7 +371,7 @@ fn fail_session(session_id: i32, db: &Connection) -> miette::Result<usize> {
 
     let rows = update.execute([now.timestamp(), session_id as i64]);
     let updated = match rows {
-        Err(e) => Err(AppError::FailedFinalize(e))?,
+        Err(e) => Err(Error::FailedFinalize(e))?,
         Ok(updated) => {
             event!(Level::WARN, "finalized session");
             updated
@@ -389,7 +388,7 @@ fn user_snapshot(user: &TwitterUser) -> UserSnapshot {
     UserSnapshot {
         user_id: user.id,
         snapshot_time: now,
-        created_date: user.created_at, // DateTime<Utc>,
+        created_date: user.created_at,
         screen_name: (*user.screen_name).to_string(),
         location: user.location.clone(),
         description: user.description.clone(),
