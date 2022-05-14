@@ -99,6 +99,8 @@ count(*)
 302     
 ```
 
+finding verified followers:
+
 ```sh
 ; sqlite3 followers.sqlite <<EOF
 SELECT COUNT(*) FROM snapshots
@@ -108,6 +110,27 @@ INNER JOIN followers ON
 WHERE verified = TRUE
 EOF
 1
+```
+
+finding users whose screen names have changed between snapshots:
+
+```sql
+SELECT DISTINCT a.screen_name, b.screen_name
+FROM snapshots a 
+INNER JOIN snapshots b 
+  ON a.session_id != b.session_id
+    AND a.session_id > b.session_id 
+    AND a.user_id = b.user_id 
+    AND a.screen_name != b.screen_name;
+```
+
+finding mutuals:
+
+``` sql
+SELECT COUNT(*) FROM followers
+INNER JOIN following ON
+  followers.session_id = following.session_id AND
+    followers.user_id = following.user_id
 ```
 
 # tools used
