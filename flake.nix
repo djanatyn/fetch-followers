@@ -19,14 +19,13 @@
     in platform.buildRustPackage rec {
       pname = "fetch-followers";
       version = "1.0";
-      buildInputs = with pkgs; [ openssl ];
+      buildInputs = with pkgs; [ openssl sqlite ];
       nativeBuildInputs = with pkgs; [
-        protobuf
         pkg-config
         latest.rustChannels.nightly.rust
       ];
 
-      cargoSha256 = "sha256-pI8FgvyqYVsl2muPSxo2cD+8ysMRkacNECNDPbQUGA0=";
+      cargoSha256 = "sha256-EByARHVCJR8H8gtVHtNsRpcT1AyEf37KfKyGmYpUSgM=";
 
       src = ./.;
     };
